@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import os from 'os';
 
 const BLOCK_SIZE = 64 * 1024; // 64KB block size
 
@@ -27,6 +28,26 @@ export function getAllFiles(dirPath, baseDir = dirPath) {
     } else {
       const relPath = path.relative(baseDir, filePath).replace(/\\/g, '/');
       results.push(relPath);
+    }
+  }
+  return results;
+}
+
+/**
+ * Recursively gets all directories in a directory.
+ * Returns relative paths with forward slashes for cross-platform compatibility.
+ */
+export function getAllDirs(dirPath, baseDir = dirPath) {
+  let results = [];
+  if (!fs.existsSync(dirPath)) return results;
+  const list = fs.readdirSync(dirPath);
+  for (const file of list) {
+    const filePath = path.join(dirPath, file);
+    const stat = fs.statSync(filePath);
+    if (stat && stat.isDirectory()) {
+      const relPath = path.relative(baseDir, filePath).replace(/\\/g, '/');
+      results.push(relPath);
+      results = results.concat(getAllDirs(filePath, baseDir));
     }
   }
   return results;
@@ -65,23 +86,61 @@ export function getFileBlocks(filePath, size) {
   return blocks;
 }
 
+const manifestCache = new Map();
+
+/**
+ * Computes a SHA-256 hash representing the files and their hashes in a manifest.
+ */
+export function getManifestHash(manifest) {
+  const files = manifest.files || {};
+  const sortedPaths = Object.keys(files).sort();
+  const parts = sortedPaths.map(p => `${p}:${files[p].hash}`);
+  const dataStr = parts.join('|');
+  return crypto.createHash('sha256').update(dataStr).digest('hex');
+}
+
 /**
  * Generates a save folder manifest containing files, their sizes, hashes, and block lists.
  */
 export function getFolderManifest(dirPath) {
-  const manifest = {
-    timestamp: new Date().toISOString(),
-    files: {}
-  };
-
-  if (!fs.existsSync(dirPath)) return manifest;
+  if (!fs.existsSync(dirPath)) {
+    return {
+      timestamp: new Date().toISOString(),
+      latestMtime: 0,
+      files: {},
+      dirs: []
+    };
+  }
 
   const relPaths = getAllFiles(dirPath);
+  let maxMtime = 0;
+  const cacheKeyParts = [];
+  const statsList = [];
+
   for (const relPath of relPaths) {
     const fullPath = path.join(dirPath, relPath);
     const stat = fs.statSync(fullPath);
     const size = stat.size;
+    const mtimeMs = stat.mtimeMs || 0;
+    if (mtimeMs > maxMtime) maxMtime = mtimeMs;
+    cacheKeyParts.push(`${relPath}:${size}:${mtimeMs}`);
+    statsList.push({ relPath, fullPath, size, mtimeMs });
+  }
 
+  const cacheKey = cacheKeyParts.join('|');
+  const cached = manifestCache.get(dirPath);
+  if (cached && cached.cacheKey === cacheKey) {
+    return cached.manifest;
+  }
+
+  const manifest = {
+    timestamp: new Date().toISOString(),
+    latestMtime: maxMtime,
+    files: {},
+    dirs: getAllDirs(dirPath)
+  };
+
+  for (const { relPath, fullPath, size, mtimeMs } of statsList) {
     let hash = '';
     let blocks = [];
 
@@ -99,10 +158,12 @@ export function getFolderManifest(dirPath) {
     manifest.files[relPath] = {
       size,
       hash,
-      blocks
+      blocks,
+      mtime: mtimeMs
     };
   }
 
+  manifestCache.set(dirPath, { cacheKey, manifest });
   return manifest;
 }
 
@@ -253,4 +314,24 @@ export function patchFile(filePath, blockChunks, remoteManifestFile) {
     fs.unlinkSync(filePath);
   }
   fs.renameSync(tempFilePath, filePath);
+}
+
+/**
+ * Translates a remote path to a local path by replacing the remote home directory with the local home directory if it resides in C:\Users.
+ */
+export function translatePathToLocal(remotePath) {
+  if (!remotePath) return remotePath;
+  
+  const normalizedRemote = path.normalize(remotePath);
+  const prefix = 'c:\\users\\';
+  if (normalizedRemote.toLowerCase().startsWith(prefix)) {
+    const afterUsers = normalizedRemote.substring(prefix.length);
+    const firstSlashIndex = afterUsers.indexOf(path.sep);
+    if (firstSlashIndex !== -1) {
+      const subPath = afterUsers.substring(firstSlashIndex + 1);
+      return path.join(os.homedir(), subPath);
+    }
+  }
+  
+  return normalizedRemote;
 }

@@ -1,15 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 import db from '../db.js';
-import { getFolderManifest, readBlocks } from '../delta.js';
+import { getFolderManifest, readBlocks, translatePathToLocal } from '../delta.js';
 import { getLatestSnapshot } from '../snapshot.js';
+import watcherEngine from '../watcher.js';
 
 export function registerExpressRoutes(app, p2pEngine) {
   app.get('/api/p2p/ping', (req, res) => {
     res.status(200).json({
       status: 'ok',
       deviceName: db.getSettings().deviceName,
-      deviceType: db.getSettings().deviceType || 'desktop'
+      deviceType: db.getSettings().deviceType || 'desktop',
+      games: p2pEngine.getLocalGamesState()
     });
   });
 
@@ -60,8 +62,25 @@ export function registerExpressRoutes(app, p2pEngine) {
 
   app.get('/api/p2p/manifest/:gameId', (req, res) => {
     const { gameId } = req.params;
-    const game = db.getGame(gameId);
-    if (!game) return res.status(404).json({ error: 'Game not found.' });
+    let game = db.getGame(gameId);
+    if (!game) {
+      const { name, savePath } = req.query;
+      if (name && savePath) {
+        try {
+          const localSavePath = translatePathToLocal(savePath);
+          console.log(`[P2P] Auto-tracking game "${name}" at "${localSavePath}" (original: "${savePath}") requested by peer.`);
+          if (!fs.existsSync(localSavePath)) {
+            fs.mkdirSync(localSavePath, { recursive: true });
+          }
+          game = db.addGame(name, localSavePath);
+          watcherEngine.watchGame(game);
+        } catch (err) {
+          return res.status(400).json({ error: `Auto-track failed: ${err.message}` });
+        }
+      } else {
+        return res.status(404).json({ error: 'Game not found.' });
+      }
+    }
     try {
       const activeBranchObj = game.branches[game.activeBranch];
       res.status(200).json({
@@ -107,5 +126,38 @@ export function registerExpressRoutes(app, p2pEngine) {
       return res.status(404).json({ error: 'Snapshot ZIP file not found.' });
     }
     res.download(snapshot.zipPath);
+  });
+
+  // Peer requests deletion of a specific file (for deletion sync)
+  app.post('/api/p2p/delete-file/:gameId', (req, res) => {
+    const { gameId } = req.params;
+    const { relPath } = req.body;
+    if (!relPath) return res.status(400).json({ error: 'relPath is required.' });
+    
+    const game = db.getGame(gameId);
+    if (!game) return res.status(404).json({ error: 'Game not found.' });
+
+    try {
+      // Security: ensure relPath doesn't escape the save directory
+      const fullPath = path.join(game.savePath, relPath);
+      const resolvedPath = path.resolve(fullPath);
+      const resolvedSave = path.resolve(game.savePath);
+      if (!resolvedPath.startsWith(resolvedSave + path.sep) && resolvedPath !== resolvedSave) {
+        return res.status(403).json({ error: 'Path traversal denied.' });
+      }
+
+      if (fs.existsSync(resolvedPath)) {
+        const stat = fs.statSync(resolvedPath);
+        if (stat.isDirectory()) {
+          fs.rmSync(resolvedPath, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(resolvedPath);
+        }
+        console.log(`[P2P] Deleted file at peer request: ${relPath} (game: ${gameId})`);
+      }
+      res.status(200).json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 }

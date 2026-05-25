@@ -351,6 +351,25 @@ input, textarea, code, pre, [contenteditable="true"], .node-id-badge {
 .nav-contact { color: var(--text-3); font-size: 12px; }
 .nav-contact:hover { color: var(--cyan); }
 
+/* Devices tab flash — triggered on sync event */
+@keyframes devicesFlash {
+  0%   { background: var(--violet-dim); box-shadow: none; }
+  20%  { background: rgba(16,185,129,0.25); box-shadow: inset 0 0 0 1px rgba(16,185,129,0.55), 0 0 12px rgba(16,185,129,0.35); }
+  60%  { background: rgba(16,185,129,0.18); box-shadow: inset 0 0 0 1px rgba(16,185,129,0.4), 0 0 8px rgba(16,185,129,0.2); }
+  100% { background: rgba(16,185,129,0.12); box-shadow: inset 0 0 0 1px rgba(16,185,129,0.35), 0 0 6px rgba(16,185,129,0.15); }
+}
+.nav-item.devices-flash {
+  background: rgba(16,185,129,0.12) !important;
+  box-shadow: inset 0 0 0 1px rgba(16,185,129,0.35), 0 0 8px rgba(16,185,129,0.2) !important;
+  color: #6ee7b7 !important;
+  animation: devicesFlash 1.2s ease-out forwards;
+}
+.nav-item.devices-flash .nav-badge {
+  background: rgba(16,185,129,0.2);
+  color: #6ee7b7;
+  border-color: rgba(16,185,129,0.4);
+}
+
 /* ============================================
    MAIN CONTENT
    ============================================ */
@@ -557,6 +576,8 @@ input, textarea, code, pre, [contenteditable="true"], .node-id-badge {
   font-weight: 600;
 }
 .sync-badge.synced { color: var(--emerald); }
+.sync-badge.out-of-sync { color: var(--orange); }
+.sync-badge.local-only { color: var(--text-3); }
 .sync-badge.syncing { color: var(--cyan); animation: pulseText 1.5s infinite; }
 .sync-badge.pending { color: var(--orange); }
 .sync-badge.error { color: var(--red); }

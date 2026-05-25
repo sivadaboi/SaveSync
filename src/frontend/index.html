@@ -621,6 +621,14 @@
               <small>Limits download rate for file synchronizations over WAN tunnels to preserve network performance.</small>
             </div>
 
+            <div class="toggle-row" style="margin-top:14px;">
+              <input type="checkbox" id="settings-auto-sync-on-track" checked>
+              <label for="settings-auto-sync-on-track">
+                <strong>Auto-Sync New Tracked Saves</strong>
+                <span>Automatically sync a game with paired devices as soon as it is added to tracking. Enabled by default.</span>
+              </label>
+            </div>
+
             <div id="relay-port-config-container" class="form-group hidden" style="margin-top:12px;">
               <label for="settings-relay-port">Relay Hosting Port</label>
               <input type="number" id="settings-relay-port" value="8386">
@@ -631,6 +639,37 @@
               <div style="font-weight:600; margin-bottom:6px;">📡 Share these with your friend:</div>
               <div>LAN IP(s): <span id="settings-local-ips" class="text-warning">Loading...</span></div>
               <div style="margin-top:4px;">Public IP: <span id="settings-public-ip" class="text-warning">Loading...</span></div>
+            </div>
+
+            <h3 class="settings-section-title" style="margin-top:24px;">🗄️ Sync Backup Storage</h3>
+            <div class="form-group">
+              <label for="settings-sync-backups-dir">Sync Snapshots Directory</label>
+              <div class="input-row">
+                <input type="text" id="settings-sync-backups-dir" placeholder="Default: ~/.savesync/backups">
+                <button type="button" id="btn-browse-sync-backups-dir" class="btn-secondary btn-sm">Browse...</button>
+              </div>
+              <small>Where P2P sync snapshots are stored (separate from manual backups). Leave blank to use the default location.</small>
+            </div>
+
+            <div class="toggle-row" style="margin-top:14px;">
+              <input type="checkbox" id="settings-auto-delete-backups">
+              <label for="settings-auto-delete-backups">
+                <strong>Auto-Delete Old Sync Backups</strong>
+                <span>Automatically remove sync backup ZIPs older than the specified number of days.</span>
+              </label>
+            </div>
+
+            <div id="auto-delete-days-container" class="form-group hidden" style="margin-top:12px;">
+              <label for="settings-auto-delete-days">Retention Period (days)</label>
+              <select id="settings-auto-delete-days" class="select-dropdown">
+                <option value="7">7 days</option>
+                <option value="14">14 days</option>
+                <option value="30" selected>30 days</option>
+                <option value="60">60 days</option>
+                <option value="90">90 days</option>
+                <option value="180">180 days</option>
+              </select>
+              <small>Sync backup ZIPs older than this will be deleted automatically once per day when the daemon runs.</small>
             </div>
 
             <div class="form-actions">

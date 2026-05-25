@@ -3,6 +3,8 @@ import { DiscoveryManager } from './discovery.js';
 import { WanClientManager } from './wan-client.js';
 import { SyncEngine } from './sync-engine.js';
 import { registerExpressRoutes } from './routes.js';
+import { getFolderManifest, getManifestHash } from '../delta.js';
+import { getLatestSnapshot } from '../snapshot.js';
 
 class P2PEngine {
   constructor() {
@@ -11,6 +13,9 @@ class P2PEngine {
     this.activeSyncs = {}; // gameId -> boolean
     this.activeConflicts = {}; // gameId -> { peer, localSnap, remoteSnap }
     this.onPeerUpdate = null;
+
+    this.peerGameStates = {}; // peerId -> { [gameId]: { latestSnapshotId, latestSnapshotTime, activeBranch, manifestHash } }
+    this.pingInterval = null;
 
     this.discovery = new DiscoveryManager(this);
     this.wanClient = new WanClientManager(this);
@@ -21,6 +26,80 @@ class P2PEngine {
     this.localPort = port;
     this.discovery.start(port);
     this.wanClient.connect();
+
+    this.pingInterval = setInterval(async () => {
+      await this.pingPairedPeers();
+      if (typeof this.onPeerUpdate === 'function') {
+        this.onPeerUpdate();
+      }
+    }, 10000);
+  }
+
+  getLocalGamesState() {
+    const games = db.getGames();
+    const state = {};
+    for (const gameId in games) {
+      const game = games[gameId];
+      let manifestHash = '';
+      try {
+        const manifest = getFolderManifest(game.savePath);
+        manifestHash = getManifestHash(manifest);
+      } catch (e) {
+        // Ignore
+      }
+      const latestSnap = getLatestSnapshot(gameId);
+      state[gameId] = {
+        latestSnapshotId: latestSnap ? latestSnap.id : null,
+        latestSnapshotTime: latestSnap ? new Date(latestSnap.timestamp).getTime() : 0,
+        activeBranch: game.activeBranch,
+        manifestHash: manifestHash
+      };
+    }
+    return state;
+  }
+
+  getGameSyncStatus(gameId) {
+    const peers = db.getPeers();
+    const onlinePeers = Object.values(peers).filter(p => p.status === 'online');
+
+    if (onlinePeers.length === 0) {
+      return 'local-only';
+    }
+
+    const game = db.getGame(gameId);
+    if (!game) return 'local-only';
+
+    let localManifestHash = '';
+    try {
+      const localManifest = getFolderManifest(game.savePath);
+      localManifestHash = getManifestHash(localManifest);
+    } catch (e) {
+      // Ignore
+    }
+
+    let allSynced = true;
+    let peerHasGame = false;
+
+    for (const peer of onlinePeers) {
+      const peerState = this.peerGameStates[peer.id];
+      if (peerState && peerState[gameId]) {
+        peerHasGame = true;
+        const peerHash = peerState[gameId].manifestHash;
+        if (peerHash !== localManifestHash) {
+          allSynced = false;
+          break;
+        }
+      } else {
+        // Peer doesn't have it tracked yet
+        allSynced = false;
+      }
+    }
+
+    if (!peerHasGame) {
+      return 'local-only';
+    }
+
+    return allSynced ? 'synced' : 'out-of-sync';
   }
 
   connectToRelay() {
@@ -99,6 +178,10 @@ class P2PEngine {
           });
           if (response.ok) {
             db.updatePeer(peerId, { status: 'online', lastSeen: Date.now() });
+            const data = await response.json();
+            if (data.games) {
+              this.peerGameStates[peerId] = data.games;
+            }
           } else {
             db.updatePeer(peerId, { status: 'offline' });
           }
@@ -236,6 +319,10 @@ class P2PEngine {
   stopDiscovery() {
     this.discovery.stop();
     this.wanClient.stop();
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
   }
 }
 

@@ -80,8 +80,13 @@ const relayPortConfigContainer  = document.getElementById('relay-port-config-con
 const relayIpsConfigContainer   = document.getElementById('relay-ips-config-container');
 const settingsLocalIps   = document.getElementById('settings-local-ips');
 const settingsPublicIp   = document.getElementById('settings-public-ip');
+const settingsSyncBackupsDir    = document.getElementById('settings-sync-backups-dir');
+const settingsAutoDeleteBackups = document.getElementById('settings-auto-delete-backups');
+const settingsAutoDeleteDays    = document.getElementById('settings-auto-delete-days');
+const autoDeleteDaysContainer   = document.getElementById('auto-delete-days-container');
 
 const btnBrowseFolder    = document.getElementById('btn-browse-folder');
+const settingsAutoSyncOnTrack   = document.getElementById('settings-auto-sync-on-track');
 const btnRunScan         = document.getElementById('btn-run-scan');
 const btnRunScanInner    = document.getElementById('btn-run-scan-inner');
 const btnTrackAll        = document.getElementById('btn-track-all');
@@ -140,10 +145,33 @@ function setupNavigation() {
   });
 }
 
+// Tracks whether the devices tab needs to flash
+let devicesTabNeedsAttention = false;
+
+function flashDevicesTab() {
+  const navPeers = document.getElementById('nav-peers');
+  if (!navPeers) return;
+  // Don't flash if the user is already on the devices tab
+  const currentActive = document.querySelector('.nav-item.active');
+  if (currentActive && currentActive.getAttribute('data-view') === 'peers') return;
+  devicesTabNeedsAttention = true;
+  navPeers.classList.remove('devices-flash');
+  // Trigger reflow to restart animation
+  void navPeers.offsetWidth;
+  navPeers.classList.add('devices-flash');
+}
+
 function navigateTo(viewId) {
   // Deactivate all nav items and views
   document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+
+  // If navigating to peers, clear the flash
+  if (viewId === 'peers') {
+    devicesTabNeedsAttention = false;
+    const navPeers = document.getElementById('nav-peers');
+    if (navPeers) navPeers.classList.remove('devices-flash');
+  }
 
   // Activate the clicked nav item and the matching view
   const navItem = document.querySelector(`.nav-item[data-view="${viewId}"]`);
@@ -161,6 +189,13 @@ function navigateTo(viewId) {
     settingsRelayUrl.value = appState.settings.relayUrl || 'ws://localhost:8386';
     settingsHostRelay.checked = !!appState.settings.hostRelay;
     settingsRelayPort.value = appState.settings.relayPort || 8386;
+    if (settingsSyncBackupsDir) settingsSyncBackupsDir.value = appState.settings.syncBackupsDir || '';
+    if (settingsAutoDeleteBackups) {
+      settingsAutoDeleteBackups.checked = !!appState.settings.autoDeleteBackups;
+      toggleAutoDeleteDays(!!appState.settings.autoDeleteBackups);
+    }
+    if (settingsAutoDeleteDays) settingsAutoDeleteDays.value = appState.settings.autoDeleteDays || '30';
+    if (settingsAutoSyncOnTrack) settingsAutoSyncOnTrack.checked = appState.settings.autoSyncOnTrack !== false;
     syncWanControls();
     toggleRelayContainers(settingsHostRelay.checked);
     loadRelayIps();
@@ -239,12 +274,18 @@ function handleWebSocketMessage(message) {
       renderWanRoom();
       updateStats();
       updateConsoleDevices();
+      // Flash devices tab if there are pending pairing requests
+      if ((data.requests || []).length > 0) {
+        flashDevicesTab();
+      }
       break;
     case 'sync-start':
       statSyncStatus.textContent = 'Syncing...';
       statSyncStatus.className = 'stat-pill-val text-warning';
       showToast(data.message || 'Syncing saves...', 'info');
       updateConsoleDevices();
+      // Flash devices tab to indicate an active sync with a peer
+      flashDevicesTab();
       break;
     case 'sync-complete':
       statSyncStatus.textContent = 'Idle';
@@ -348,6 +389,10 @@ function setupEventListeners() {
     const relayUrl   = settingsRelayUrl.value.trim();
     const hostRelay  = settingsHostRelay.checked;
     const relayPort  = parseInt(settingsRelayPort.value, 10) || 8386;
+    const syncBackupsDir = settingsSyncBackupsDir ? settingsSyncBackupsDir.value.trim() : '';
+    const autoDeleteBackups = settingsAutoDeleteBackups ? settingsAutoDeleteBackups.checked : false;
+    const autoDeleteDays = settingsAutoDeleteDays ? parseInt(settingsAutoDeleteDays.value, 10) || 30 : 30;
+    const autoSyncOnTrack = settingsAutoSyncOnTrack ? settingsAutoSyncOnTrack.checked : true;
     await saveSettings({
       deviceName,
       deviceType,
@@ -356,13 +401,34 @@ function setupEventListeners() {
       hostRelay,
       relayPort,
       startOnBoot,
-      speedLimit
+      speedLimit,
+      syncBackupsDir,
+      autoDeleteBackups,
+      autoDeleteDays,
+      autoSyncOnTrack
     });
     await loadRelayIps();
   });
 
   // Host Relay Toggle
   settingsHostRelay.addEventListener('change', () => toggleRelayContainers(settingsHostRelay.checked));
+
+  // Auto-Delete Backup Toggle
+  settingsAutoDeleteBackups?.addEventListener('change', () => toggleAutoDeleteDays(settingsAutoDeleteBackups.checked));
+
+  // Browse for Sync Backup Dir
+  document.getElementById('btn-browse-sync-backups-dir')?.addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/browse-directory');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.path && settingsSyncBackupsDir) {
+          settingsSyncBackupsDir.value = data.path;
+        }
+      }
+    } catch (e) {}
+  });
+
 
   // Scanner
   btnRunScan.addEventListener('click', runDirectoryScan);
@@ -379,7 +445,7 @@ function setupEventListeners() {
     showToast(`Tracking ${untracked.length} save folders...`, 'info');
     let count = 0;
     for (const item of untracked) {
-      const success = await trackFolder(item.name, item.savePath);
+      const success = await trackFolder(item.name, item.savePath, item.appId || null);
       if (success) count++;
     }
     showToast(`Tracked ${count} / ${untracked.length} folders!`, 'success');
@@ -836,12 +902,14 @@ function restoreSavedBackupDir() {
   if (restoreInput && savedRestore) restoreInput.value = savedRestore;
 }
 
-async function trackFolder(name, savePath) {
+async function trackFolder(name, savePath, appId = null) {
   try {
+    const body = { name, savePath };
+    if (appId) body.appId = String(appId);
     const res = await fetch('/api/games', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, savePath })
+      body: JSON.stringify(body)
     });
     if (res.ok) { showToast(`Started monitoring: ${name}`, 'success'); return true; }
     else { const err = await res.json(); showToast(err.error, 'error'); return false; }
@@ -934,6 +1002,10 @@ async function runDirectoryScan() {
 function toggleRelayContainers(isHosting) {
   relayPortConfigContainer?.classList.toggle('hidden', !isHosting);
   relayIpsConfigContainer?.classList.toggle('hidden', !isHosting);
+}
+
+function toggleAutoDeleteDays(enabled) {
+  autoDeleteDaysContainer?.classList.toggle('hidden', !enabled);
 }
 
 async function loadRelayIps() {
@@ -1071,6 +1143,20 @@ function renderGames() {
       ? `<div class="game-card-cover" style="background-image: url('${coverSrc}');"></div>`
       : `<div class="game-card-cover">🎮</div>`;
 
+    let badgeClass = 'sync-badge local-only';
+    let badgeText = 'Local Only';
+    let indicatorColor = 'var(--text-3)';
+
+    if (game.syncStatus === 'synced') {
+      badgeClass = 'sync-badge synced';
+      badgeText = 'Synced';
+      indicatorColor = 'var(--emerald)';
+    } else if (game.syncStatus === 'out-of-sync') {
+      badgeClass = 'sync-badge out-of-sync';
+      badgeText = 'Out of Sync';
+      indicatorColor = 'var(--orange)';
+    }
+
     card.innerHTML = `
       ${coverHtml}
       <div class="game-card-body">
@@ -1081,8 +1167,8 @@ function renderGames() {
         <p class="game-path-text" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; height: 28px;" title="${game.savePath}">${game.savePath}</p>
         <div class="game-footer-info" style="margin-top: 0; padding-top: 6px;">
           <span class="backup-count-info">Backups: <strong>${snapCount}</strong></span>
-          <span class="sync-badge synced">
-            <span class="pulse-indicator" style="background:var(--emerald); box-shadow:0 0 6px var(--emerald);"></span> Synced
+          <span class="${badgeClass}">
+            <span class="pulse-indicator" style="background:${indicatorColor}; box-shadow:0 0 6px ${indicatorColor};"></span> ${badgeText}
           </span>
         </div>
       </div>
@@ -1138,6 +1224,9 @@ function renderScanResults(discovered) {
       ? `<div class="game-card-cover" style="background-image: url('${coverSrc}');"></div>`
       : `<div class="game-card-cover">🎮</div>`;
 
+    // Safely encode appId for embedding in onclick attribute
+    const appIdAttr = item.appId ? String(item.appId) : '';
+
     card.innerHTML = `
       ${coverHtml}
       <div class="game-card-body">
@@ -1150,7 +1239,7 @@ function renderScanResults(discovered) {
           <span class="backup-count-info" style="font-size:11px;">Status: <strong>${isTracked ? 'Monitored' : 'Not Monitored'}</strong></span>
           ${isTracked
             ? `<span style="color:var(--emerald);font-weight:600;font-size:11px;">✓ Active</span>`
-            : `<button class="btn-peer-action" onclick="trackDiscoveredSave('${item.name.replace(/'/g, "\\'")}', '${item.savePath.replace(/\\/g, '\\\\')}')">+ Track</button>`
+            : `<button class="btn-peer-action" onclick="trackDiscoveredSave('${item.name.replace(/'/g, "\\'")}', '${item.savePath.replace(/\\/g, '\\\\')}', '${appIdAttr}')">+ Track</button>`
           }
         </div>
       </div>
@@ -1456,8 +1545,8 @@ function renderDrawerDetails() {
 // ============================================================
 // GLOBAL WINDOW ACTIONS
 // ============================================================
-window.trackDiscoveredSave = async (name, savePath) => {
-  const success = await trackFolder(name, savePath);
+window.trackDiscoveredSave = async (name, savePath, appId = null) => {
+  const success = await trackFolder(name, savePath, appId || null);
   if (success) runDirectoryScan();
 };
 

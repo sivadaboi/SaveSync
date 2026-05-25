@@ -40,13 +40,25 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const connectedClients = new Set();
 
+function getEnrichedGames() {
+  const games = db.getGames();
+  const enriched = {};
+  for (const gameId in games) {
+    enriched[gameId] = {
+      ...games[gameId],
+      syncStatus: p2pEngine.getGameSyncStatus ? p2pEngine.getGameSyncStatus(gameId) : 'local-only'
+    };
+  }
+  return enriched;
+}
+
 wss.on('connection', (ws) => {
   connectedClients.add(ws);
   
   // Send initial data immediately
   sendToClient(ws, 'init', {
     settings: db.getSettings(),
-    games: db.getGames(),
+    games: getEnrichedGames(),
     peers: db.getPeers(),
     discoveredPeers: p2pEngine.getDiscoveredPeers(),
     pairingRequests: p2pEngine.getPairingRequests(),
@@ -62,7 +74,11 @@ wss.on('connection', (ws) => {
 
 // Helper to broadcast events to all open Web UIs
 function broadcast(event, data) {
-  const payload = JSON.stringify({ event, data });
+  let payloadData = data;
+  if (event === 'games-update') {
+    payloadData = getEnrichedGames();
+  }
+  const payload = JSON.stringify({ event, data: payloadData });
   for (const client of connectedClients) {
     if (client.readyState === 1) { // OPEN
       client.send(payload);
@@ -133,6 +149,16 @@ app.post('/api/settings', (req, res) => {
     if (req.body.relayPort !== undefined) updateData.relayPort = parseInt(req.body.relayPort, 10) || 8386;
     if (req.body.startOnBoot !== undefined) updateData.startOnBoot = !!req.body.startOnBoot;
     if (req.body.speedLimit !== undefined) updateData.speedLimit = parseInt(req.body.speedLimit, 10) || 0;
+    if (req.body.syncBackupsDir !== undefined && req.body.syncBackupsDir) {
+      const syncDir = path.resolve(req.body.syncBackupsDir);
+      if (!fs.existsSync(syncDir)) {
+        fs.mkdirSync(syncDir, { recursive: true });
+      }
+      updateData.syncBackupsDir = syncDir;
+    }
+    if (req.body.autoDeleteBackups !== undefined) updateData.autoDeleteBackups = !!req.body.autoDeleteBackups;
+    if (req.body.autoDeleteDays !== undefined) updateData.autoDeleteDays = Math.max(1, parseInt(req.body.autoDeleteDays, 10) || 30);
+    if (req.body.autoSyncOnTrack !== undefined) updateData.autoSyncOnTrack = !!req.body.autoSyncOnTrack;
 
     const updated = db.updateSettings(updateData);
     const settings = db.getSettings();
@@ -258,18 +284,47 @@ app.get('/api/games', (req, res) => {
 
 // Add game
 app.post('/api/games', (req, res) => {
-  const { name, savePath } = req.body;
+  const { name, savePath, appId } = req.body;
   if (!name || !savePath) {
     return res.status(400).json({ error: 'Name and Save Path are required.' });
   }
 
   try {
     const game = db.addGame(name, savePath);
+    // Store appId immediately if provided (e.g. from scanner presets)
+    if (appId) {
+      db.updateGame(game.id, { appId: String(appId) });
+    }
     // Register file watcher
     watcherEngine.watchGame(game);
+    // Create initial snapshot if directory has files
+    try {
+      if (fs.existsSync(game.savePath)) {
+        const files = fs.readdirSync(game.savePath);
+        if (files.length > 0) {
+          createSnapshot(game.id, 'Initial save state', false);
+        }
+      }
+    } catch (snapErr) {
+      console.error(`[Daemon] Failed to create initial snapshot for ${game.name}:`, snapErr.message);
+    }
     // Broadcast state update to UI
-    broadcast('games-update', db.getGames());
-    res.status(201).json(game);
+    broadcast('games-update', getEnrichedGames());
+    
+    // Automatically trigger P2P sync for the newly tracked game (if setting enabled)
+    const settings = db.getSettings();
+    if (settings.autoSyncOnTrack !== false) {
+      p2pEngine.syncGame(game.id)
+        .then((result) => {
+          broadcast('games-update', getEnrichedGames());
+          broadcast('sync-complete', { gameId: game.id, result });
+        })
+        .catch((err) => {
+          console.error(`[Daemon] Auto-sync failed for newly tracked game ${game.name}:`, err.message);
+        });
+    }
+
+    res.status(201).json(db.getGame(game.id));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -793,6 +848,45 @@ if (portIndex !== -1 && args[portIndex + 1]) {
 // Host configuration (can be local-only or bind to all interfaces)
 const host = '0.0.0.0';
 
+/**
+ * Deletes sync backup ZIPs older than `autoDeleteDays` days from syncBackupsDir.
+ * Runs only when autoDeleteBackups setting is enabled.
+ */
+function cleanupOldSyncBackups() {
+  const settings = db.getSettings();
+  if (!settings.autoDeleteBackups) return;
+  const cutoffMs = settings.autoDeleteDays * 24 * 60 * 60 * 1000;
+  const syncDir = settings.syncBackupsDir || settings.backupsDir;
+  if (!fs.existsSync(syncDir)) return;
+
+  const now = Date.now();
+  try {
+    const gameDirs = fs.readdirSync(syncDir);
+    for (const gameId of gameDirs) {
+      const gamePath = path.join(syncDir, gameId);
+      if (!fs.statSync(gamePath).isDirectory()) continue;
+      const branchDirs = fs.readdirSync(gamePath);
+      for (const branch of branchDirs) {
+        const branchPath = path.join(gamePath, branch);
+        if (!fs.statSync(branchPath).isDirectory()) continue;
+        const files = fs.readdirSync(branchPath);
+        for (const file of files) {
+          if (!file.endsWith('.zip')) continue;
+          const filePath = path.join(branchPath, file);
+          const stat = fs.statSync(filePath);
+          const ageMs = now - stat.mtimeMs;
+          if (ageMs > cutoffMs) {
+            fs.unlinkSync(filePath);
+            log('info', `Auto-cleanup: Deleted old sync backup`, `${gameId}/${branch}/${file} (${Math.round(ageMs / 86400000)}d old)`);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    log('error', 'Auto-cleanup failed', err.message);
+  }
+}
+
 server.listen(port, host, () => {
   log('info', 'SaveSync Daemon Started!', `Dashboard: http://localhost:${port}`);
   log('info', `P2P Node Address: Binding to all interfaces on port ${port}`);
@@ -807,8 +901,13 @@ server.listen(port, host, () => {
       requests: p2pEngine.getPairingRequests(),
       wanRoom: p2pEngine.getWanRoomStatus()
     });
+    broadcast('games-update', db.getGames());
   };
   watcherEngine.start();
+
+  // Run auto-cleanup at startup and schedule daily
+  cleanupOldSyncBackups();
+  setInterval(cleanupOldSyncBackups, 24 * 60 * 60 * 1000);
 
   // Start in-process relay server if enabled in settings
   const settings = db.getSettings();

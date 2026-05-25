@@ -3,8 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import db from '../db.js';
 import { log } from '../logger.js';
-import { getFolderManifest, readBlocks } from '../delta.js';
+import { getFolderManifest, readBlocks, translatePathToLocal } from '../delta.js';
 import { getLatestSnapshot } from '../snapshot.js';
+import watcherEngine from '../watcher.js';
 
 export class WanClientManager {
   constructor(p2pEngine) {
@@ -61,7 +62,8 @@ export class WanClientManager {
           from: localPeerId,
           deviceName: settings.deviceName,
           deviceType: settings.deviceType || 'desktop',
-          port: this.p2pEngine.localPort
+          port: this.p2pEngine.localPort,
+          games: this.p2pEngine.getLocalGamesState()
         });
 
         // Start ping interval (every 3 seconds) to keep connection alive and update presence
@@ -123,7 +125,8 @@ export class WanClientManager {
           from: this.p2pEngine.getLocalPeerId(),
           deviceName: db.getSettings().deviceName,
           deviceType: db.getSettings().deviceType || 'desktop',
-          port: this.p2pEngine.localPort
+          port: this.p2pEngine.localPort,
+          games: this.p2pEngine.getLocalGamesState()
         });
       } catch (err) {}
     }
@@ -191,6 +194,10 @@ export class WanClientManager {
       if (this.p2pEngine.discoveredPeers[msg.from]) {
         this.p2pEngine.discoveredPeers[msg.from].lastSeen = Date.now();
       }
+      if (msg.games) {
+        this.p2pEngine.peerGameStates[msg.from] = msg.games;
+        changed = true;
+      }
       if (changed && typeof this.p2pEngine.onPeerUpdate === 'function') {
         this.p2pEngine.onPeerUpdate();
       }
@@ -254,7 +261,8 @@ export class WanClientManager {
             from: localPeerId,
             deviceName: db.getSettings().deviceName,
             deviceType: db.getSettings().deviceType || 'desktop',
-            port: this.p2pEngine.localPort
+            port: this.p2pEngine.localPort,
+            games: this.p2pEngine.getLocalGamesState()
           });
         }
         break;
@@ -325,12 +333,33 @@ export class WanClientManager {
 
     try {
       if (route.startsWith('/manifest/')) {
-        const gameId = route.split('/').pop();
-        const game = db.getGame(gameId);
+        const urlObj = new URL(route, 'http://localhost');
+        const gameId = urlObj.pathname.split('/').pop();
+        let game = db.getGame(gameId);
+        
         if (!game) {
-          status = 404;
-          data = { error: 'Game not found.' };
-        } else {
+          const name = urlObj.searchParams.get('name');
+          const savePath = urlObj.searchParams.get('savePath');
+          if (name && savePath) {
+            try {
+              const localSavePath = translatePathToLocal(savePath);
+              console.log(`[WAN P2P] Auto-tracking game "${name}" at "${localSavePath}" (original: "${savePath}") requested by WAN peer.`);
+              if (!fs.existsSync(localSavePath)) {
+                fs.mkdirSync(localSavePath, { recursive: true });
+              }
+              game = db.addGame(name, localSavePath);
+              watcherEngine.watchGame(game);
+            } catch (err) {
+              status = 400;
+              data = { error: `Auto-track failed: ${err.message}` };
+            }
+          } else {
+            status = 404;
+            data = { error: 'Game not found.' };
+          }
+        }
+
+        if (game) {
           const activeBranchObj = game.branches[game.activeBranch];
           data = {
             gameId,

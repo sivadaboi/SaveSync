@@ -81,7 +81,9 @@ export class SyncEngine {
     log('info', `Syncing "${game.name}" with "${peer.name}"`, `${peer.address === 'relay' ? 'WAN Relay' : 'Direct LAN'}`);
 
     // 1. Fetch remote manifest & branch info
-    const remoteData = await this.p2pEngine.p2pRequest(peer, `/manifest/${gameId}`);
+    const nameParam = encodeURIComponent(game.name);
+    const pathParam = encodeURIComponent(game.savePath);
+    const remoteData = await this.p2pEngine.p2pRequest(peer, `/manifest/${gameId}?name=${nameParam}&savePath=${pathParam}`);
     
     // Check branch compatibility
     if (game.activeBranch !== remoteData.activeBranch) {
@@ -92,49 +94,204 @@ export class SyncEngine {
     const localManifest = getFolderManifest(game.savePath);
     const remoteManifest = remoteData.manifest;
 
-    // Compare latest snapshots to determine who has the newer save
-    const localLatestSnap = getLatestSnapshot(gameId);
     const remoteLatestSnap = remoteData.latestSnapshot;
 
-    const localTime = localLatestSnap ? new Date(localLatestSnap.timestamp).getTime() : 0;
-    const remoteTime = remoteLatestSnap ? new Date(remoteLatestSnap.timestamp).getTime() : 0;
+    const localFiles = localManifest.files || {};
+    const remoteFiles = remoteManifest.files || {};
+    const allFiles = new Set([...Object.keys(localFiles), ...Object.keys(remoteFiles)]);
 
-    // Diverged History / Conflict check:
-    if (localLatestSnap && remoteLatestSnap && localLatestSnap.id !== remoteLatestSnap.id) {
-      const branch = game.branches[game.activeBranch];
-      const localSnapshots = branch ? branch.snapshots : [];
-      const isRemoteInLocalHistory = localSnapshots.some(s => s.id === remoteLatestSnap.id);
-      
-      const remoteHistory = remoteData.history || [];
-      const isLocalInRemoteHistory = remoteHistory.includes(localLatestSnap.id);
+    // Load last known synced file list for this game/peer pair
+    // This allows us to distinguish "deleted locally" vs "new on remote"
+    const lastSyncedFiles = new Set(game.lastSyncedFilesByPeer?.[peer.id] || []);
 
-      if (!isRemoteInLocalHistory && !isLocalInRemoteHistory) {
-        log('error', `Diverged history conflict detected`, `Game: "${game.name}" with peer "${peer.name}"`);
-        this.p2pEngine.activeConflicts[gameId] = {
-          peer,
-          localSnap: localLatestSnap,
-          remoteSnap: remoteLatestSnap
-        };
-        return {
-          status: 'conflict',
-          peerName: peer.name,
-          peerId: peer.id,
-          localSnap: localLatestSnap,
-          remoteSnap: remoteLatestSnap
-        };
+    const filesToPull = [];
+    const filesToPush = [];
+    const filesToDeleteOnPeer = []; // files we deleted locally that peer still has
+    const filesToDeleteLocally = []; // files peer deleted that we still have (peer will trigger delete on us via /delete-file)
+
+    for (const relPath of allFiles) {
+      const localFile = localFiles[relPath];
+      const remoteFile = remoteFiles[relPath];
+
+      if (remoteFile && !localFile) {
+        // On remote, missing locally
+        if (lastSyncedFiles.has(relPath)) {
+          // Was in last sync — it was deleted locally → ask peer to delete it too
+          filesToDeleteOnPeer.push(relPath);
+        } else {
+          // Was NOT in last sync — it's new on remote → pull it
+          filesToPull.push(relPath);
+        }
+      } else if (localFile && !remoteFile) {
+        // On local, missing remotely
+        if (lastSyncedFiles.has(relPath)) {
+          // Was in last sync — it was deleted on remote → delete locally too
+          filesToDeleteLocally.push(relPath);
+        } else {
+          // Was NOT in last sync — it's new locally → push to remote
+          filesToPush.push(relPath);
+        }
+      } else if (localFile && remoteFile && localFile.hash !== remoteFile.hash) {
+        // Both have file, but different. Compare mtimes.
+        const localMtime = localFile.mtime || 0;
+        const remoteMtime = remoteFile.mtime || 0;
+
+        if (remoteMtime > localMtime) {
+          filesToPull.push(relPath);
+        } else if (localMtime > remoteMtime) {
+          filesToPush.push(relPath);
+        } else {
+          // Tie-breaker: pull from remote
+          filesToPull.push(relPath);
+        }
       }
     }
 
-    if (localTime === remoteTime) {
+    const hasChanges = filesToPull.length > 0 || filesToPush.length > 0 || filesToDeleteOnPeer.length > 0 || filesToDeleteLocally.length > 0;
+
+    if (!hasChanges) {
       log('success', `Peer "${peer.name}" is already in sync`, `Game: "${game.name}"`);
+      // Refresh lastSyncedFiles even on no-change to ensure they're up to date
+      const currentFileList = Object.keys(localFiles);
+      const updatedSyncState = { ...(game.lastSyncedFilesByPeer || {}), [peer.id]: currentFileList };
+      db.updateGame(gameId, { lastSyncedFilesByPeer: updatedSyncState });
       return { status: 'in_sync', direction: 'none' };
     }
 
-    if (localTime > remoteTime) {
-      log('event', `Detected changes`, `Local is newer than remote "${peer.name}" for "${game.name}". Requesting peer pull.`);
+    // Handle local deletions: delete files locally that peer deleted
+    if (filesToDeleteLocally.length > 0) {
+      log('event', 'Applying remote deletions', `Removing ${filesToDeleteLocally.length} file(s) deleted on peer "${peer.name}"`);
+      for (const relPath of filesToDeleteLocally) {
+        const fullPath = path.join(game.savePath, relPath);
+        try {
+          if (fs.existsSync(fullPath)) {
+            fs.unlinkSync(fullPath);
+            log('info', `Deleted locally (peer deleted): ${relPath}`);
+          }
+        } catch (e) {
+          log('warn', `Could not delete ${relPath}:`, e.message);
+        }
+      }
+    }
+
+    // Handle deletion propagation to peer: ask peer to delete files we deleted
+    if (filesToDeleteOnPeer.length > 0) {
+      log('event', 'Propagating local deletions', `Asking "${peer.name}" to delete ${filesToDeleteOnPeer.length} file(s)`);
+      for (const relPath of filesToDeleteOnPeer) {
+        try {
+          await this.p2pEngine.p2pRequest(peer, `/delete-file/${gameId}`, 'POST', { relPath });
+          log('info', `Peer deleted: ${relPath}`);
+        } catch (e) {
+          log('warn', `Could not propagate deletion of ${relPath} to peer:`, e.message);
+        }
+      }
+    }
+
+
+    // 2. Pull remote files if needed
+    if (filesToPull.length > 0) {
+      // Ensure all remote directories exist locally
+      const remoteDirs = remoteManifest.dirs || [];
+      for (const dir of remoteDirs) {
+        const localDirPath = path.join(game.savePath, dir);
+        if (!fs.existsSync(localDirPath)) {
+          fs.mkdirSync(localDirPath, { recursive: true });
+          log('info', `Created local directory: ${dir}`);
+        }
+      }
+
+      log('event', 'Detected changes', `Remote save on "${peer.name}" has newer/different files. Pulling ${filesToPull.length} file(s)...`);
+
+      for (const relPath of filesToPull) {
+        const remoteFileMeta = remoteFiles[relPath];
+        let differentBlocks = [];
+        const localFile = localFiles[relPath];
+
+        if (!localFile) {
+          differentBlocks = remoteFileMeta.blocks.map(b => b.index);
+        } else {
+          const remoteBlocks = remoteFileMeta.blocks || [];
+          const localBlocks = localFile.blocks || [];
+          const maxBlocks = Math.max(remoteBlocks.length, localBlocks.length);
+          for (let i = 0; i < maxBlocks; i++) {
+            const rBlock = remoteBlocks[i];
+            const lBlock = localBlocks[i];
+            if (!lBlock || !rBlock || lBlock.hash !== rBlock.hash) {
+              differentBlocks.push(i);
+            }
+          }
+        }
+
+        log('event', 'Fetching blocks', `Fetching ${differentBlocks.length} block(s) for file: ${relPath}`);
+
+        const blockChunks = [];
+        const isWan = peer.address === 'relay' || peer.isWan;
+        const batchSize = isWan ? 8 : 16;
+
+        for (let i = 0; i < differentBlocks.length; i += batchSize) {
+          const batchIndices = differentBlocks.slice(i, i + batchSize);
+          const blockData = await this.p2pEngine.p2pRequest(peer, `/blocks/${gameId}`, 'POST', { relPath, blockIndices: batchIndices });
+          blockChunks.push(...blockData.blocks);
+
+          let bytesReceived = 0;
+          for (const block of blockData.blocks) {
+            bytesReceived += block.length;
+          }
+          await this.throttle(bytesReceived, isWan);
+        }
+
+        // Patch file
+        const localFilePath = path.join(game.savePath, relPath);
+        patchFile(localFilePath, blockChunks, remoteFileMeta);
+
+        // Update local modification time to match remote
+        if (remoteFileMeta.mtime) {
+          try {
+            const time = remoteFileMeta.mtime / 1000;
+            fs.utimesSync(localFilePath, time, time);
+          } catch (e) {
+            console.warn(`[Sync] Failed to set utime on ${localFilePath}:`, e.message);
+          }
+        }
+        log('info', `File updated: ${relPath}`);
+      }
+
+      // Record snapshot locally mirroring the remote's latest snapshot state
+      if (remoteLatestSnap) {
+        const localBackupDir = path.join(db.getSettings().syncBackupsDir || db.getSettings().backupsDir, gameId, game.activeBranch);
+        ensureDir(localBackupDir);
+        
+        const zipPath = path.join(localBackupDir, `${remoteLatestSnap.id}.zip`);
+        
+        const zip = new AdmZip();
+        zip.addLocalFolder(game.savePath);
+        zip.writeZip(zipPath);
+
+        const branches = game.branches || {};
+        if (!branches[game.activeBranch]) {
+          branches[game.activeBranch] = { name: game.activeBranch, snapshots: [] };
+        }
+        
+        if (!branches[game.activeBranch].snapshots.some(s => s.id === remoteLatestSnap.id)) {
+          branches[game.activeBranch].snapshots.push({
+            id: remoteLatestSnap.id,
+            timestamp: remoteLatestSnap.timestamp,
+            comment: `Synced from peer: ${peer.name} (${remoteLatestSnap.comment})`,
+            isSystemAuto: true,
+            zipPath,
+            sizeBytes: fs.statSync(zipPath).size,
+            branch: game.activeBranch
+          });
+          db.updateGame(gameId, { branches });
+        }
+      }
+    }
+
+    // 3. Trigger peer pull if we have files to push
+    if (filesToPush.length > 0) {
+      log('event', 'Detected changes', `Local has newer/different files than remote "${peer.name}". Triggering peer pull.`);
       
       if (peer.address === 'relay' || peer.isWan) {
-        // Trigger WAN peer pull via WebSocket message
         this.p2pEngine.wanClient.sendRelayMessage({
           type: 'request',
           to: peer.id,
@@ -143,100 +300,37 @@ export class SyncEngine {
           method: 'GET'
         });
       } else {
-        // Trigger direct LAN pull via HTTP get
         fetch(`http://${peer.address}:${peer.port}/api/sync/trigger/${gameId}?originPeer=${db.getSettings().deviceName}`, {
           signal: AbortSignal.timeout(5000)
         }).catch(() => {});
       }
-      return { status: 'triggered_peer_pull', direction: 'push' };
     }
 
-    // Remote is newer! We need to pull from remote.
-    log('event', 'Detected changes', `Remote save on "${peer.name}" is newer for "${game.name}". Pulling changes...`);
-
-    // 2. Perform delta diff
-    const diff = diffManifests(localManifest, remoteManifest);
-    log('event', 'Compressing delta', `Delta diff calculated: ${diff.added.length} added, ${Object.keys(diff.modified).length} modified, ${diff.deleted.length} deleted`);
-
-    // 3. Process deletions
-    for (const relPath of diff.deleted) {
-      const fullPath = path.join(game.savePath, relPath);
-      if (fs.existsSync(fullPath)) {
-        fs.unlinkSync(fullPath);
-        log('info', `Deleted local file: ${relPath}`);
-      }
+    if (filesToPull.length > 0 && filesToPush.length > 0) {
+      log('success', 'Sync complete (bidirectional)', `Updated local from "${peer.name}" and triggered peer to pull`);
+    } else if (filesToPull.length > 0) {
+      log('success', 'Sync complete (pulled)', `Updated "${game.name}" from "${peer.name}"`);
+    } else if (filesToDeleteLocally.length > 0 || filesToDeleteOnPeer.length > 0) {
+      log('success', 'Sync complete (deletions applied)', `Synced deletions for "${game.name}" with "${peer.name}"`);
+    } else {
+      log('success', 'Sync complete (triggered push)', `Triggered "${peer.name}" to pull updates for "${game.name}"`);
     }
 
-    // 4. Process additions and modifications
-    const allModifiedFiles = [...diff.added, ...Object.keys(diff.modified)];
+    // Save the current file list so future syncs can detect deletions
+    const freshManifest = getFolderManifest(game.savePath);
+    const currentFileList = Object.keys(freshManifest.files || {});
+    const updatedSyncState = { ...(db.getGame(gameId).lastSyncedFilesByPeer || {}), [peer.id]: currentFileList };
+    db.updateGame(gameId, { lastSyncedFilesByPeer: updatedSyncState });
 
-    for (const relPath of allModifiedFiles) {
-      const remoteFileMeta = remoteManifest.files[relPath];
-      let differentBlocks = [];
-      if (diff.added.includes(relPath)) {
-        differentBlocks = remoteFileMeta.blocks.map(b => b.index);
-      } else {
-        differentBlocks = diff.modified[relPath].differentBlocks;
-      }
-
-      log('event', 'Encrypting payload', `Fetching ${differentBlocks.length} block(s) for file: ${relPath}`);
-
-      const blockChunks = [];
-      const isWan = peer.address === 'relay' || peer.isWan;
-      const batchSize = isWan ? 8 : 16;
-
-      for (let i = 0; i < differentBlocks.length; i += batchSize) {
-        const batchIndices = differentBlocks.slice(i, i + batchSize);
-        const blockData = await this.p2pEngine.p2pRequest(peer, `/blocks/${gameId}`, 'POST', { relPath, blockIndices: batchIndices });
-        blockChunks.push(...blockData.blocks);
-
-        let bytesReceived = 0;
-        for (const block of blockData.blocks) {
-          bytesReceived += block.length;
-        }
-        await this.throttle(bytesReceived, isWan);
-      }
-
-      // Reconstruct/patch the file
-      const localFilePath = path.join(game.savePath, relPath);
-      patchFile(localFilePath, blockChunks, remoteFileMeta);
-      log('info', `File updated: ${relPath}`);
-    }
-
-    // 5. Retrieve local snapshot files
-    if (remoteLatestSnap) {
-      const localBackupDir = path.join(db.getSettings().backupsDir, gameId, game.activeBranch);
-      ensureDir(localBackupDir);
-      
-      const zipPath = path.join(localBackupDir, `${remoteLatestSnap.id}.zip`);
-      
-      // Zip the newly updated save folder
-      const zip = new AdmZip();
-      zip.addLocalFolder(game.savePath);
-      zip.writeZip(zipPath);
-
-      // Save snapshot to local database history
-      const branches = game.branches || {};
-      if (!branches[game.activeBranch]) {
-        branches[game.activeBranch] = { name: game.activeBranch, snapshots: [] };
-      }
-      
-      if (!branches[game.activeBranch].snapshots.some(s => s.id === remoteLatestSnap.id)) {
-        branches[game.activeBranch].snapshots.push({
-          id: remoteLatestSnap.id,
-          timestamp: remoteLatestSnap.timestamp,
-          comment: `Synced from peer: ${peer.name} (${remoteLatestSnap.comment})`,
-          isSystemAuto: true,
-          zipPath,
-          sizeBytes: fs.statSync(zipPath).size,
-          branch: game.activeBranch
-        });
-        db.updateGame(gameId, { branches });
-      }
-    }
-
-    log('success', 'Sync complete', `Updated "${game.name}" from "${peer.name}"`);
-    return { status: 'updated', direction: 'pull' };
+    return {
+      status: filesToPull.length > 0 && filesToPush.length > 0 ? 'updated_bidirectional'
+        : filesToPull.length > 0 ? 'updated'
+        : filesToDeleteLocally.length > 0 || filesToDeleteOnPeer.length > 0 ? 'deletions_synced'
+        : 'triggered_peer_pull',
+      direction: filesToPull.length > 0 && filesToPush.length > 0 ? 'bidirectional'
+        : filesToPull.length > 0 ? 'pull'
+        : 'push'
+    };
   }
 
   // Conflict resolution handler
@@ -318,7 +412,7 @@ export class SyncEngine {
 
       const remoteLatestSnap = remoteData.latestSnapshot;
       if (remoteLatestSnap) {
-        const localBackupDir = path.join(db.getSettings().backupsDir, gameId, game.activeBranch);
+        const localBackupDir = path.join(db.getSettings().syncBackupsDir || db.getSettings().backupsDir, gameId, game.activeBranch);
         ensureDir(localBackupDir);
         const zipPath = path.join(localBackupDir, `${remoteLatestSnap.id}.zip`);
         
@@ -395,7 +489,7 @@ export class SyncEngine {
 
       const remoteLatestSnap = remoteData.latestSnapshot;
       if (remoteLatestSnap) {
-        const localBackupDir = path.join(db.getSettings().backupsDir, gameId, branchName);
+        const localBackupDir = path.join(db.getSettings().syncBackupsDir || db.getSettings().backupsDir, gameId, branchName);
         ensureDir(localBackupDir);
         const zipPath = path.join(localBackupDir, `${remoteLatestSnap.id}.zip`);
         
