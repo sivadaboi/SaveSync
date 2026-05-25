@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SaveSync — Universal P2P Game Save Synchronizer</title>
+  <meta name="description" content="SaveSync is a free, open-source, local-first game save synchronization utility. Backup, version, and sync game saves across PCs securely over LAN or WAN.">
+  
+  <!-- Modern Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Navigation Bar -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="logo">
+        <span class="logo-emoji">👾</span>
+        <span class="logo-text">Save<span>Sync</span></span>
+      </div>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#demo">Live Demo</a>
+        <a href="#install">Install Guide</a>
+        <a href="https://github.com/sivadaboi/SaveSync" target="_blank" class="github-link">
+          <svg class="github-icon" viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+          GitHub
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Background Ambient Glows -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="hero-container">
+      <div class="hero-content">
+        <h1 class="hero-title">Take Control of Your <span>Game Saves</span></h1>
+        <p class="hero-subtitle">
+          SaveSync is a free, open-source, local-first synchronization engine. Copy, version, and backup your active game saves across computers automatically. Zero cloud tracking, zero accounts.
+        </p>
+        <div class="hero-ctas">
+          <a href="../dist-app/SaveSync Setup 1.0.0.exe" class="btn-primary" download id="btn-hero-download">
+            <span>📥</span> Download for Windows
+          </a>
+          <a href="https://github.com/sivadaboi/SaveSync" target="_blank" class="btn-secondary">
+            View Source Code
+          </a>
+        </div>
+        <div class="hero-badge">
+          <span class="badge-dot"></span> P2P LAN Sync + Secure WAN Relays
+        </div>
+      </div>
+      
+      <!-- Glassmorphic Mockup -->
+      <div class="hero-mockup-container">
+        <div class="glass-mockup">
+          <div class="mockup-header">
+            <div class="mockup-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="mockup-title">SaveSync Dashboard v1.0.0</div>
+          </div>
+          <div class="mockup-body">
+            <div class="mockup-sidebar">
+              <div class="sidebar-item active">🗂️ Library</div>
+              <div class="sidebar-item">🔎 Auto-Scan</div>
+              <div class="sidebar-item">🌐 Devices</div>
+              <div class="sidebar-item">📡 Cloud Relay</div>
+              <div class="sidebar-item">📦 Backups</div>
+            </div>
+            <div class="mockup-content">
+              <div class="mockup-grid">
+                <div class="mockup-card">
+                  <div class="card-img-placeholder">Elden Ring</div>
+                  <div class="card-info">
+                    <h4>Elden Ring</h4>
+                    <span class="status-badge synced">Synced</span>
+                  </div>
+                </div>
+                <div class="mockup-card">
+                  <div class="card-img-placeholder">Cyberpunk 2077</div>
+                  <div class="card-info">
+                    <h4>Cyberpunk 2077</h4>
+                    <span class="status-badge synced">Synced</span>
+                  </div>
+                </div>
+                <div class="mockup-card">
+                  <div class="card-img-placeholder">Hades II</div>
+                  <div class="card-info">
+                    <h4>Hades II</h4>
+                    <span class="status-badge out-of-sync">Out of Sync</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Section -->
+  <section id="features" class="features">
+    <div class="section-container">
+      <h2 class="section-title">Why Use <span>SaveSync</span>?</h2>
+      <p class="section-subtitle">Ditch proprietary clouds and take full ownership of your gaming progress.</p>
+      
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">⚡</div>
+          <h3>Direct P2P LAN Sync</h3>
+          <p>Sync saves directly between your systems on your home network with maximum speed. No servers or cloud limits.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📡</div>
+          <h3>Secure WAN Relay</h3>
+          <p>Link devices across the internet using simple shared room codes. Sync saves with remote PCs securely through end-to-end routing.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📸</div>
+          <h3>Version Timeline</h3>
+          <p>Every time your folder changes, SaveSync takes a safety backup snapshot. Roll back to older versions instantly if your save corrupts.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🧩</div>
+          <h3>Delta Block Transfer</h3>
+          <p>Optimized sync logic checks content hashes and transfers only modified blocks of files. Perfect for large emulated retro saves.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔎</div>
+          <h3>Automatic Save Scanner</h3>
+          <p>Auto-detects active emulators (RPCS3, Ryujinx, PCSX2), Steam libraries, Epic Games Store, and GOG saves on your drive instantly.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔒</div>
+          <h3>Privacy-First Philosophy</h3>
+          <p>No user accounts, no tracking scripts, and no telemetries. All files are compressed and stored locally on your own hardware.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Live Simulator Demo -->
+  <section id="demo" class="demo-section">
+    <div class="section-container">
+      <h2 class="section-title">See SaveSync in <span>Action</span></h2>
+      <p class="section-subtitle">Interact with our P2P simulator to watch files synchronize between two virtual systems.</p>
+      
+      <div class="simulator-wrapper">
+        <div class="simulator-devices">
+          <!-- Device A -->
+          <div class="virtual-device" id="device-a">
+            <div class="device-screen">
+              <div class="screen-title">🎮 Steam Deck (Local)</div>
+              <div class="file-list-box">
+                <div class="box-title">Save Directory</div>
+                <ul class="file-items" id="device-a-files">
+                  <li class="file-item" data-file="data.bin"><span>data.bin</span><span class="file-size">12 MB</span></li>
+                  <li class="file-item" data-file="config.ini"><span>config.ini</span><span class="file-size">24 KB</span></li>
+                </ul>
+              </div>
+              <button type="button" class="btn-simulator-action" id="btn-trigger-modify">Modify Save File</button>
+            </div>
+          </div>
+
+          <!-- Network Connection Path -->
+          <div class="network-path">
+            <div class="ping-signal" id="ping-signal"></div>
+            <div class="network-line"></div>
+            <div class="speed-bubble" id="sim-speed-bubble">Idle</div>
+          </div>
+
+          <!-- Device B -->
+          <div class="virtual-device" id="device-b">
+            <div class="device-screen">
+              <div class="screen-title">💻 Gaming PC (Remote)</div>
+              <div class="file-list-box">
+                <div class="box-title">Sync Folder</div>
+                <ul class="file-items" id="device-b-files">
+                  <li class="file-item" data-file="data.bin"><span>data.bin</span><span class="file-size">12 MB</span></li>
+                  <li class="file-item" data-file="config.ini"><span>config.ini</span><span class="file-size">24 KB</span></li>
+                </ul>
+              </div>
+              <div class="progress-bar-block hidden" id="sim-progress-block">
+                <div class="progress-bar-header">
+                  <span id="sim-progress-status">Syncing...</span>
+                  <span id="sim-progress-percent">0%</span>
+                </div>
+                <div class="progress-bar-track">
+                  <div class="progress-bar-fill" id="sim-progress-fill" style="width: 0%;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Simulated Logs console -->
+        <div class="console-box">
+          <div class="console-header">
+            <span>📟 SaveSync Engine Daemon Logs</span>
+            <span class="console-dot"></span>
+          </div>
+          <div class="console-body" id="sim-console-logs">
+            <div class="log-line info">Ready. Click "Modify Save File" on the Steam Deck to trigger file system events.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Installation Guide Section -->
+  <section id="install" class="install-section">
+    <div class="section-container">
+      <h2 class="section-title">Getting <span>Started</span></h2>
+      <p class="section-subtitle">Get up and running in less than two minutes.</p>
+      
+      <div class="install-steps">
+        <div class="step-card">
+          <div class="step-num">01</div>
+          <h3>Download the App</h3>
+          <p>Get the installer setup executable directly from this page or compile it yourself from source.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-num">02</div>
+          <h3>Select Your Saves</h3>
+          <p>Scan your system to auto-import emulator saves, or manually select any directory path on your disk.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-num">03</div>
+          <h3>Pair &amp; Synchronize</h3>
+          <p>Link your systems on LAN, or input a unique room code for internet relays to synchronize directories.</p>
+        </div>
+      </div>
+      
+      <div class="bottom-download-box">
+        <h3>Ready to take ownership of your game saves?</h3>
+        <p>SaveSync is free, open-source, and licensed under MIT.</p>
+        <a href="../dist-app/SaveSync Setup 1.0.0.exe" class="btn-primary btn-lg" download id="btn-bottom-download">
+          📥 Download installer for Windows
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-container">
+      <div class="footer-brand">
+        <span class="logo-emoji">👾</span> Save<span>Sync</span>
+      </div>
+      <p class="footer-text">
+        Created by <a href="mailto:officialsivapm@gmail.com">Siva Prakash</a>. Free &amp; Open Source under the MIT License.
+      </p>
+      <div class="footer-links">
+        <a href="#features">Features</a>
+        <a href="#demo">Demo</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/sivadaboi/SaveSync" target="_blank">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Script File -->
+  <script src="app.js"></script>
+</body>
+</html>
