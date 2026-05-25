@@ -1,0 +1,7 @@
+node_modules/
+dist-app/
+test_run/
+test_run_wan/
+*.log
+.DS_Store
+.env

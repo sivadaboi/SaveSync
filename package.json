@@ -1,0 +1,72 @@
+{
+  "name": "savesync",
+  "version": "1.0.0",
+  "description": "Universal P2P game save synchronizer",
+  "main": "src/main.js",
+  "type": "module",
+  "bin": {
+    "savesync": "./bin/savesync.js"
+  },
+  "scripts": {
+    "start": "node src/daemon/index.js",
+    "start:relay": "node src/relay-server.js",
+    "start:app": "electron .",
+    "dist:app": "electron-builder --win",
+    "port:forward": "node scripts/upnp-port-forward.js 8386",
+    "port:unforward": "node scripts/upnp-port-forward.js 8386 --delete",
+    "test": "node test/test-sync.js",
+    "test:wan": "node test/test-wan-relay.js",
+    "deploy:relay": "echo 'Push to GitHub then go to https://render.com/deploy and connect your repo. render.yaml handles the rest.'"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.17",
+    "chokidar": "^5.0.0",
+    "express": "^5.2.1",
+    "ws": "^8.21.0"
+  },
+  "pkg": {
+    "assets": [
+      "src/frontend/**/*"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^42.2.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.savesync.app",
+    "productName": "SaveSync",
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "src/tray-icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": true,
+      "license": "PRIVACY.md",
+      "include": "installer.nsh",
+      "installerHeaderIcon": "src/tray-icon.png",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SaveSync"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "PRIVACY.md"
+    ],
+    "extraResources": [
+      {
+        "from": "PRIVACY.md",
+        "to": "PRIVACY.md"
+      }
+    ],
+    "directories": {
+      "output": "dist-app"
+    }
+  }
+}

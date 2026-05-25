@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SaveSync — Universal P2P Game Save Synchronizer</title>
+  <meta name="description" content="SaveSync is a free, open-source peer-to-peer game save synchronization utility. Sync, version, and backup your game saves across devices.">
+  <!-- Modern Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Custom Frameless Titlebar -->
+  <div class="app-titlebar">
+    <div class="titlebar-drag-region"></div>
+    <div class="titlebar-logo">
+      <img src="logo.png" alt="Logo" class="titlebar-logo-img">
+      <span class="titlebar-name">Save<span>Sync</span></span>
+    </div>
+    <div class="titlebar-center">
+      <div class="status-indicator online" id="titlebar-status">
+        <span class="indicator-dot"></span>
+        <span id="daemon-status-text">Daemon Online</span>
+      </div>
+    </div>
+    <div class="titlebar-controls">
+      <button id="titlebar-minimize" class="titlebar-btn" title="Minimize">&#9472;</button>
+      <button id="titlebar-maximize" class="titlebar-btn" title="Maximize">&#9633;</button>
+      <button id="titlebar-close" class="titlebar-btn close-btn" title="Close to Tray">&times;</button>
+    </div>
+  </div>
+
+  <!-- Background Ambient Glows -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+  <div class="ambient-glow glow-3"></div>
+
+  <!-- App Shell -->
+  <div class="app-shell">
+
+    <!-- Left Sidebar Navigation -->
+    <nav class="sidebar-nav">
+      <div class="nav-brand">
+        <img src="logo.png" alt="Logo" class="brand-logo-img">
+        <div class="brand-text">
+          <span class="brand-name">Save<span>Sync</span></span>
+          <span class="brand-sub" id="local-device-name">Loading...</span>
+        </div>
+      </div>
+
+      <div class="nav-section-label">LIBRARY</div>
+      <button class="nav-item active" data-view="games" id="nav-games">
+        <span class="nav-icon">🗂️</span>
+        <span class="nav-label">Tracked Saves</span>
+        <span class="nav-badge" id="nav-badge-games">0</span>
+      </button>
+      <button class="nav-item" data-view="scanner" id="nav-scanner">
+        <span class="nav-icon">🔎</span>
+        <span class="nav-label">Auto-Scan</span>
+      </button>
+
+      <div class="nav-section-label">NETWORK</div>
+      <button class="nav-item" data-view="peers" id="nav-peers">
+        <span class="nav-icon">🌐</span>
+        <span class="nav-label">Devices</span>
+        <span class="nav-badge" id="nav-badge-peers">0</span>
+      </button>
+      <button class="nav-item" data-view="wan" id="nav-wan">
+        <span class="nav-icon">📡</span>
+        <span class="nav-label">Internet Sync</span>
+      </button>
+
+      <div class="nav-section-label">DATA</div>
+      <button class="nav-item" data-view="backups" id="nav-backups">
+        <span class="nav-icon">📦</span>
+        <span class="nav-label">Backups</span>
+      </button>
+      <button class="nav-item" data-view="console" id="nav-console">
+        <span class="nav-icon">📟</span>
+        <span class="nav-label">Activity Log</span>
+      </button>
+
+      <div class="nav-spacer"></div>
+
+      <div class="nav-section-label">APP</div>
+      <button class="nav-item" data-view="settings" id="nav-settings">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Settings</span>
+      </button>
+      <a href="mailto:officialsivapm@gmail.com" class="nav-item nav-contact" tabindex="0">
+        <span class="nav-icon">✉️</span>
+        <span class="nav-label">Contact Dev</span>
+      </a>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+
+      <!-- Stats Header Bar (always visible) -->
+      <div class="stats-topbar">
+        <div class="stat-pill">
+          <span class="stat-pill-icon">👾</span>
+          <span id="stat-games-count" class="stat-pill-val">0</span>
+          <span class="stat-pill-label">Games</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-pill-icon">💻</span>
+          <span id="stat-peers-count" class="stat-pill-val">0</span>
+          <span class="stat-pill-label">Peers Online</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-pill-icon">💾</span>
+          <span id="stat-backups-count" class="stat-pill-val">0</span>
+          <span class="stat-pill-label">Snapshots</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-pill-icon">⚡</span>
+          <span id="stat-sync-status" class="stat-pill-val text-success">Idle</span>
+          <span class="stat-pill-label">Status</span>
+        </div>
+        <div class="topbar-actions">
+          <button id="btn-add-game-modal" class="btn-primary btn-sm">
+            <span>+</span> Track Folder
+          </button>
+        </div>
+      </div>
+
+      <!-- ======== VIEW: GAMES ======== -->
+      <div id="view-games" class="view active">
+        <div class="view-header">
+          <div>
+            <h1 class="view-title">Tracked Save Folders</h1>
+            <p class="view-subtitle">Click a game to view its snapshot timeline, branches, and sync controls.</p>
+          </div>
+        </div>
+        <div id="games-grid" class="games-grid">
+          <div class="empty-state">
+            <div class="empty-icon">🎮</div>
+            <h3>No games tracked yet</h3>
+            <p>Add your first game's save folder directory to start versioning and syncing.</p>
+            <button id="btn-empty-add-game" class="btn-primary">Track a Game</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======== VIEW: SCANNER ======== -->
+      <div id="view-scanner" class="view">
+        <div class="view-header">
+          <div>
+            <h1 class="view-title">Auto-Detected Saves</h1>
+            <p class="view-subtitle">Emulators, repacks, and common save directories discovered automatically.</p>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button id="btn-track-all" class="btn-primary btn-sm hidden">➕ Track All</button>
+            <button id="btn-untrack-all" class="btn-danger btn-sm hidden">❌ Untrack All</button>
+            <button id="btn-run-scan" class="btn-secondary">🔎 Scan System</button>
+          </div>
+        </div>
+        <div id="scan-results-grid" class="games-grid">
+          <div class="empty-state">
+            <div class="empty-icon">🔎</div>
+            <h3>Scan to discover local saves</h3>
+            <p>We'll check common directories for retro emulators (RPCS3, PCSX2, Ryujinx, etc.) and repack configs.</p>
+            <button id="btn-run-scan-inner" class="btn-primary">Scan Saves</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======== VIEW: PEERS / DEVICES ======== -->
+      <div id="view-peers" class="view">
+        <div class="view-header">
+          <div>
+            <h1 class="view-title">Connected Devices</h1>
+            <p class="view-subtitle">Manage paired devices on your local network for direct P2P sync.</p>
+          </div>
+        </div>
+
+        <div class="peers-layout">
+          <!-- Left: Paired Peers -->
+          <div class="content-card">
+            <div class="card-header-row">
+              <h3>Paired Devices</h3>
+              <span class="pulse-indicator" title="LAN Scanning Active"></span>
+            </div>
+            <ul id="paired-peers-list" class="peer-list">
+              <li class="empty-list-msg">No devices paired. Add a peer via IP/port or approve a LAN discovery request.</li>
+            </ul>
+          </div>
+
+          <!-- Right: Discovery + Manual connect -->
+          <div style="display:flex; flex-direction:column; gap:20px;">
+            <div class="content-card">
+              <div class="card-header-row">
+                <h3>Discovered on LAN</h3>
+                <span class="badge-pill">UDP</span>
+              </div>
+              <ul id="discovered-peers-list" class="peer-list">
+                <li class="empty-list-msg">Scanning network...</li>
+              </ul>
+            </div>
+
+            <div class="content-card">
+              <div class="card-header-row">
+                <h3>Connect via IP Address</h3>
+              </div>
+              <p class="card-desc">Use the other device's LAN IP and port 8383 when automatic discovery is blocked.</p>
+              <form id="form-add-peer" class="inline-form">
+                <input type="text" id="peer-address-input" placeholder="e.g. 192.168.1.100" required>
+                <input type="number" id="peer-port-input" placeholder="8383" value="8383" required>
+                <button type="submit" class="btn-submit">Pair</button>
+              </form>
+              <div id="peer-probe-status" class="info-banner hidden" style="margin-top:12px;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Pairing Requests Panel -->
+        <div id="pairing-requests-panel" class="content-card warning-accent hidden" style="margin-top:20px;">
+          <div class="card-header-row">
+            <h3>⚠️ Incoming Pairing Requests</h3>
+            <span class="badge-pill badge-warning">Action Required</span>
+          </div>
+          <ul id="pairing-requests-list" class="peer-list request-list"></ul>
+        </div>
+      </div>
+
+      <!-- ======== VIEW: INTERNET SYNC (WAN) ======== -->
+      <div id="view-wan" class="view">
+        <div class="view-header">
+          <div>
+            <h1 class="view-title">Internet Sync</h1>
+            <p class="view-subtitle">Sync saves with friends anywhere in the world — no port forwarding required.</p>
+          </div>
+        </div>
+
+        <div class="wan-grid">
+
+          <!-- Cloud Relay Card (recommended / default) -->
+          <div class="content-card cloud-relay-card">
+            <div class="card-header-row">
+              <h3>☁️ Cloud Relay</h3>
+              <span class="badge-pill badge-cloud">RECOMMENDED</span>
+            </div>
+            <p class="card-desc">
+              SaveSync hosts a <strong>free public relay</strong> — no setup required.
+              Just generate a code, share it with the other device, and join.
+            </p>
+
+            <!-- Relay health status bar -->
+            <div class="relay-health-bar" id="relay-health-bar">
+              <div class="relay-health-dot" id="relay-health-dot"></div>
+              <span class="relay-health-label" id="relay-health-label">Checking relay…</span>
+              <span class="relay-health-meta" id="relay-health-meta"></span>
+              <button type="button" id="btn-use-cloud-relay" class="btn-sm btn-cloud-relay" title="Switch to cloud relay">
+                Use Cloud Relay
+              </button>
+            </div>
+
+            <!-- Relay URL display (editable, advanced) -->
+            <div class="form-group" style="margin-bottom:12px; margin-top:12px;">
+              <label for="wan-relay-url-input">Relay URL</label>
+              <input type="text" id="wan-relay-url-input" placeholder="wss://savesync-relay.onrender.com">
+              <small>Cloud relay is WSS (encrypted). Self-hosted relays use WS. Both devices must use the same URL.</small>
+            </div>
+
+            <!-- Join room -->
+            <form id="form-wan-sync" class="wan-form">
+              <div class="wan-input-row">
+                <input type="text" id="wan-code-input" placeholder="Enter or paste a Sync Room Code" required>
+                <button type="submit" class="btn-primary">Join Room</button>
+              </div>
+            </form>
+
+            <div id="active-wan-room-display" class="wan-active-room hidden">
+              <div class="wan-room-info">
+                <div class="wan-room-dot"></div>
+                <div>
+                  <div class="wan-room-label">Active Sync Room</div>
+                  <div id="wan-room-name-lbl" class="wan-room-code">None</div>
+                </div>
+              </div>
+              <button id="btn-leave-wan-room" class="btn-danger btn-sm">Leave Room</button>
+            </div>
+
+            <button id="btn-generate-wan-code" class="btn-secondary" style="width:100%;margin-top:12px;">
+              🎲 Generate Random Code
+            </button>
+          </div>
+
+          <!-- Devices in Room -->
+          <div class="content-card">
+            <div class="card-header-row">
+              <h3>Devices in Room</h3>
+              <span id="wan-room-peer-count" class="badge-pill">0 ONLINE</span>
+            </div>
+            <div class="wan-relay-status">
+              <div>
+                <span class="wan-room-label">Relay</span>
+                <div id="wan-relay-url-lbl" class="wan-room-url">Not configured</div>
+              </div>
+              <span id="wan-connection-state" class="badge-pill badge-warning">DISCONNECTED</span>
+            </div>
+            <ul id="wan-room-peers-list" class="peer-list wan-room-peer-list">
+              <li class="empty-list-msg">Join a room to see relay peers.</li>
+            </ul>
+          </div>
+
+          <!-- Self-Host / Advanced -->
+          <div class="content-card">
+            <div class="card-header-row">
+              <h3>Self-Host Relay <span style="font-size:0.75rem;opacity:0.5;">(Advanced)</span></h3>
+              <span class="badge-pill">OPTIONAL</span>
+            </div>
+            <p class="card-desc">Run the relay on your own PC or server. Useful for private LAN-only setups or if you want full control. Requires port forwarding TCP&nbsp;8386 on your router.</p>
+
+            <div class="toggle-row">
+              <input type="checkbox" id="wan-host-relay">
+              <label for="wan-host-relay">
+                <strong>Host relay on this PC</strong>
+                <span>Starts the room broker inside SaveSync on TCP port 8386.</span>
+              </label>
+            </div>
+
+            <div class="form-group" style="margin-top:12px;">
+              <label for="wan-relay-port-input">Relay Port</label>
+              <input type="number" id="wan-relay-port-input" value="8386">
+              <small>Forward this TCP port on your router to this PC for internet access.</small>
+            </div>
+
+            <div class="info-banner" style="margin-top:12px;">
+              <div style="font-weight:600; margin-bottom:6px;">Shareable relay addresses</div>
+              <div>LAN: <span id="wan-local-ips" class="text-warning">Loading…</span></div>
+              <div style="margin-top:4px;">Internet: <span id="wan-public-ip" class="text-warning">Loading…</span></div>
+            </div>
+
+            <div class="form-actions">
+              <button type="button" id="btn-save-wan-hosting" class="btn-primary">Apply Hosting</button>
+              <button type="button" id="btn-use-local-relay" class="btn-secondary">Use Local Relay</button>
+            </div>
+          </div>
+
+          <!-- How It Works -->
+          <div class="content-card">
+            <div class="card-header-row">
+              <h3>How It Works</h3>
+            </div>
+            <div class="how-it-works">
+              <div class="hiw-step">
+                <div class="hiw-num">1</div>
+                <div>
+                  <strong>Generate or share a code</strong>
+                  <p>Create a unique room code and share it with the other device via any messenger.</p>
+                </div>
+              </div>
+              <div class="hiw-step">
+                <div class="hiw-num">2</div>
+                <div>
+                  <strong>Both devices join the room</strong>
+                  <p>Enter the same code on both machines. The SaveSync cloud relay passes traffic between room members — no port forwarding needed.</p>
+                </div>
+              </div>
+              <div class="hiw-step">
+                <div class="hiw-num">3</div>
+                <div>
+                  <strong>Pair &amp; sync automatically</strong>
+                  <p>Once in the same room, SaveSync handles pairing and keeps your saves in sync — even across continents.</p>
+                </div>
+              </div>
+              <div class="hiw-step">
+                <div class="hiw-num">4</div>
+                <div>
+                  <strong>Want to self-host?</strong>
+                  <p>Deploy the relay to Render.com for free using the <code>render.yaml</code> in the project root, or use Docker.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======== VIEW: BACKUPS ======== -->
+      <div id="view-backups" class="view">
+        <div class="view-header">
+          <div>
+            <h1 class="view-title">Backup & Restore</h1>
+            <p class="view-subtitle">Create compressed Brotli backups of all tracked saves, or restore a previous backup to its original location.</p>
+          </div>
+        </div>
+
+        <div class="backup-grid">
+          <!-- Export Card -->
+          <div class="content-card">
+            <div class="card-header-row">
+              <h3>📦 Create Backup</h3>
+              <span class="badge-pill" style="background:rgba(16,185,129,0.12);color:#6ee7b7;border-color:rgba(16,185,129,0.25);">BROTLI .sscb</span>
+            </div>
+            <p class="card-desc">
+              Compress all tracked game saves into individual high-efficiency <code>.sscb</code> files. Each game gets its own file inside a timestamped backup folder — so you can restore them individually without touching the rest.
+            </p>
+            <div class="form-group">
+              <label for="settings-backup-dir">Backup Destination Directory</label>
+              <div class="input-row">
+                <input type="text" id="settings-backup-dir" placeholder="e.g. D:\SaveBackups">
+                <button type="button" id="btn-browse-backup-dir" class="btn-secondary btn-sm">Browse...</button>
+              </div>
+            </div>
+            <button type="button" id="btn-execute-backup" class="btn-accent" style="width:100%;">
+              📦 Create Master Backup
+            </button>
+            <div id="backup-results-container" class="result-box success-box hidden">
+              <div class="result-title">✓ Backup Completed Successfully!</div>
+              <div class="result-row">Folder: <strong id="lbl-backup-folder" class="text-warning">—</strong></div>
+              <div class="result-row">Saved: <strong id="lbl-backup-ratio" class="text-success">0%</strong> reduction (<span id="lbl-backup-orig">0 KB</span> → <span id="lbl-backup-comp">0 KB</span>)</div>
+            </div>
+          </div>
+
+          <!-- Restore Card -->
+          <div class="content-card">
+            <div class="card-header-row">
+              <h3>🔄 Restore Backup</h3>
+              <span class="badge-pill" style="background:rgba(6,182,212,0.12);color:#67e8f9;border-color:rgba(6,182,212,0.25);">DECOMPRESS</span>
+            </div>
+            <p class="card-desc">
+              Select a SaveSync backup folder (containing <code>.sscb</code> files and <code>backup-metadata.json</code>). Files will be decompressed and restored to their original save paths.
+            </p>
+            <div class="form-group">
+              <label for="restore-backup-dir">Backup Folder to Restore</label>
+              <div class="input-row">
+                <input type="text" id="restore-backup-dir" placeholder="e.g. D:\SaveBackups\2026-05-24_18-00-00-savesync-backup">
+                <button type="button" id="btn-browse-restore-dir" class="btn-secondary btn-sm">Browse...</button>
+              </div>
+            </div>
+            <div class="info-banner warning-banner" style="margin-bottom:12px;">
+              ⚠️ Restoring will overwrite files in your live save directories. A safety snapshot will be created automatically before writing.
+            </div>
+            <button type="button" id="btn-execute-restore" class="btn-warning" style="width:100%;">
+              🔄 Restore Saves
+            </button>
+            <div id="restore-results-container" class="result-box hidden">
+              <div class="result-title" id="restore-result-title">Restore Complete</div>
+              <div id="restore-result-details" class="restore-details"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Backup format info -->
+        <div class="content-card" style="margin-top:20px;">
+          <div class="card-header-row">
+            <h3>About the .sscb Format</h3>
+          </div>
+          <div class="format-info-grid">
+            <div class="format-info-item">
+              <div class="format-info-icon">🗜️</div>
+              <div>
+                <strong>Brotli Compression</strong>
+                <p>Industry-leading lossless compression (up to 90%+ reduction on text-heavy save data).</p>
+              </div>
+            </div>
+            <div class="format-info-item">
+              <div class="format-info-icon">📁</div>
+              <div>
+                <strong>Per-Game Files</strong>
+                <p>Each game's saves are packed into its own <code>.sscb</code> file so you can restore one game without extracting everything.</p>
+              </div>
+            </div>
+            <div class="format-info-item">
+              <div class="format-info-icon">📋</div>
+              <div>
+                <strong>Metadata Manifest</strong>
+                <p>Every backup folder contains a <code>backup-metadata.json</code> with original paths, timestamps, and compression statistics.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======== VIEW: CONSOLE ======== -->
+      <div id="view-console" class="view">
+        <div class="view-header">
+          <div>
+            <h1 class="view-title">Activity Log</h1>
+            <p class="view-subtitle">Real-time status of filesystem events, P2P network handshakes, and save delta transfers.</p>
+          </div>
+        </div>
+
+        <!-- Device Status Panel -->
+        <div class="device-status-panel">
+          <div class="device-card" id="dev-desktop" data-type="desktop">
+            <div class="device-glow"></div>
+            <div class="device-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </div>
+            <div class="device-details">
+              <span class="device-name">Desktop</span>
+              <span class="device-os">Windows / Mac / Linux</span>
+            </div>
+          </div>
+          <div class="device-card" id="dev-deck" data-type="deck">
+            <div class="device-glow"></div>
+            <div class="device-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="12" rx="2" ry="2"/><line x1="2" y1="20" x2="22" y2="20"/><line x1="12" y1="16" x2="12" y2="20"/></svg>
+            </div>
+            <div class="device-details">
+              <span class="device-name">Steam Deck</span>
+              <span class="device-os">SteamOS / Linux</span>
+            </div>
+          </div>
+          <div class="device-card" id="dev-handheld" data-type="handheld">
+            <div class="device-glow"></div>
+            <div class="device-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="3"/><line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/><circle cx="15.5" cy="10.5" r="1" fill="currentColor"/><circle cx="17" cy="12" r="1" fill="currentColor"/><circle cx="15.5" cy="13.5" r="1" fill="currentColor"/><circle cx="14" cy="12" r="1" fill="currentColor"/></svg>
+            </div>
+            <div class="device-details">
+              <span class="device-name">Handheld</span>
+              <span class="device-os">ROG Ally / Emulator</span>
+            </div>
+          </div>
+          <div class="device-card" id="dev-mobile" data-type="mobile">
+            <div class="device-glow"></div>
+            <div class="device-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12" y2="18.01"/></svg>
+            </div>
+            <div class="device-details">
+              <span class="device-name">Companion</span>
+              <span class="device-os">Mobile App</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Terminal Logs Area -->
+        <div class="terminal-container">
+          <div class="terminal-header">
+            <div class="terminal-dots">
+              <span class="dot-red"></span>
+              <span class="dot-yellow"></span>
+              <span class="dot-green"></span>
+            </div>
+            <div class="terminal-title">savesync@local:~</div>
+            <button id="btn-clear-console" class="btn-clear-console" title="Clear console">🧹 Clear</button>
+          </div>
+          <div class="terminal-body" id="console-logs-area">
+            <!-- logs appended here -->
+          </div>
+          <div class="terminal-footer">
+            <span class="version-lbl">savesync v1.0.0</span>
+            <span class="sync-status-lbl" id="console-sync-status">● All devices synchronized</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ======== VIEW: SETTINGS ======== -->
+      <div id="view-settings" class="view">
+        <div class="view-header">
+          <div>
+            <h1 class="view-title">Settings</h1>
+            <p class="view-subtitle">Configure your device name, relay server, and connection preferences.</p>
+          </div>
+        </div>
+
+        <div class="settings-layout">
+          <form id="form-update-settings" class="content-card settings-card">
+            <h3 class="settings-section-title">🖥️ Device Identity</h3>
+            <div class="form-group">
+              <label for="settings-device-name">Device Display Name</label>
+              <input type="text" id="settings-device-name" placeholder="e.g. My Gaming PC" required>
+              <small>This name appears to other players when they discover your device.</small>
+            </div>
+
+            <div class="form-group" style="margin-top:12px;">
+              <label for="settings-device-type">Device Category Type</label>
+              <select id="settings-device-type" class="select-dropdown">
+                <option value="desktop">Desktop (Windows / macOS / Linux PC)</option>
+                <option value="deck">Steam Deck (Linux/SteamOS Handheld)</option>
+                <option value="handheld">Handheld (ROG Ally / Legion Go / Emulator)</option>
+                <option value="mobile">Companion (Mobile Device)</option>
+              </select>
+              <small>Select the type of device to display on the Activity Log and peer dashboard.</small>
+            </div>
+
+            <h3 class="settings-section-title" style="margin-top:24px;">🌐 WAN Relay Server</h3>
+            <div class="form-group">
+              <label for="settings-relay-url">WebSocket Relay URL</label>
+              <input type="text" id="settings-relay-url" required>
+              <small>Use ws://localhost:8386 on the relay host, or ws://LAN-or-public-IP:8386 from another device. Self-hosted internet relay requires TCP port forwarding.</small>
+            </div>
+
+            <div class="toggle-row">
+              <input type="checkbox" id="settings-host-relay">
+              <label for="settings-host-relay">
+                <strong>Host a Local WAN Relay Server</strong>
+                <span>Run a relay server on this machine so friends can connect to you.</span>
+              </label>
+            </div>
+
+            <h3 class="settings-section-title" style="margin-top:24px;">⚙️ System &amp; Performance</h3>
+            <div class="toggle-row" style="margin-bottom:14px;">
+              <input type="checkbox" id="settings-start-on-boot">
+              <label for="settings-start-on-boot">
+                <strong>Launch on System Startup</strong>
+                <span>Automatically run SaveSync in the system tray when Windows starts.</span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label for="settings-speed-limit">WAN Bandwidth Limit</label>
+              <select id="settings-speed-limit" class="select-dropdown">
+                <option value="0">Unlimited (Max Speed)</option>
+                <option value="100">100 KB/s (Very Low)</option>
+                <option value="500">500 KB/s (Medium)</option>
+                <option value="1024">1 MB/s (High)</option>
+                <option value="5120">5 MB/s (Very High)</option>
+                <option value="10240">10 MB/s (Ultra)</option>
+              </select>
+              <small>Limits download rate for file synchronizations over WAN tunnels to preserve network performance.</small>
+            </div>
+
+            <div id="relay-port-config-container" class="form-group hidden" style="margin-top:12px;">
+              <label for="settings-relay-port">Relay Hosting Port</label>
+              <input type="number" id="settings-relay-port" value="8386">
+              <small>Forward this port (TCP) on your router to allow remote friends to connect.</small>
+            </div>
+
+            <div id="relay-ips-config-container" class="info-banner hidden" style="margin-top:12px;">
+              <div style="font-weight:600; margin-bottom:6px;">📡 Share these with your friend:</div>
+              <div>LAN IP(s): <span id="settings-local-ips" class="text-warning">Loading...</span></div>
+              <div style="margin-top:4px;">Public IP: <span id="settings-public-ip" class="text-warning">Loading...</span></div>
+            </div>
+
+            <div class="form-actions">
+              <button type="submit" class="btn-primary">Save Settings</button>
+            </div>
+          </form>
+
+          <div style="display:flex; flex-direction:column; gap:20px;">
+            <div class="content-card">
+              <h3 class="settings-section-title">📩 Contact & Support</h3>
+              <p style="font-size:13px; color:var(--text-muted); line-height:1.5; margin-bottom:12px;">
+                Have a feature request, bug report, or want to contribute? Reach out directly to the developer.
+              </p>
+              <a href="mailto:officialsivapm@gmail.com" class="contact-link">
+                ✉️ officialsivapm@gmail.com
+              </a>
+            </div>
+
+            <div class="content-card">
+              <h3 class="settings-section-title">🔒 Privacy</h3>
+              <p style="font-size:13px; color:var(--text-muted); line-height:1.5; margin-bottom:12px;">
+                SaveSync collects <strong style="color:var(--color-emerald);">zero personal data</strong>. No accounts, no telemetry, no cloud uploads. All saves stay on your machine.
+              </p>
+              <div style="font-size:12px; color:var(--text-muted);">
+                Open-source · Local-first · Self-hostable
+              </div>
+            </div>
+
+            <div class="content-card">
+              <h3 class="settings-section-title">ℹ️ About</h3>
+              <div class="about-row"><span>Version</span><span class="text-muted">1.0.0</span></div>
+              <div class="about-row"><span>License</span><span class="text-muted">MIT</span></div>
+              <div class="about-row"><span>Author</span><span class="text-muted">Siva Prakash</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ===================== MODALS ===================== -->
+
+  <!-- MODAL: Add Game / Custom Folder -->
+  <div id="add-game-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Track Save Folder</h3>
+        <button class="btn-close-modal">&times;</button>
+      </div>
+      <form id="form-add-game">
+        <div class="form-group">
+          <label for="game-name-input">Label / Name</label>
+          <input type="text" id="game-name-input" placeholder="e.g. Witcher 3, RetroArch PSP" required>
+        </div>
+        <div class="form-group">
+          <label for="game-path-input">Folder Absolute Path</label>
+          <div class="input-row">
+            <input type="text" id="game-path-input" placeholder="e.g. C:\Users\...\My Games\EldenRing" required>
+            <button type="button" id="btn-browse-folder" class="btn-secondary btn-sm">Browse...</button>
+          </div>
+          <small>Choose any save directory. SaveSync monitors and syncs all files inside it.</small>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary btn-close-modal">Cancel</button>
+          <button type="submit" class="btn-primary">Track Folder</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- VIEW: Game History Timeline Drawer -->
+  <div id="game-details-drawer" class="drawer-overlay hidden">
+    <div class="drawer-content">
+      <header class="drawer-header">
+        <div class="drawer-title-area">
+          <button id="btn-close-drawer" class="btn-back">&larr;</button>
+          <div>
+            <h2 id="drawer-game-name">Game Details</h2>
+            <p id="drawer-game-path" class="path-display">C:\save\path</p>
+          </div>
+        </div>
+        <div class="drawer-controls">
+          <div class="branch-selector-container">
+            <span class="control-label">Branch:</span>
+            <select id="branch-select" class="dropdown-select">
+              <!-- Dynamically populated branches -->
+            </select>
+            <button id="btn-create-branch" class="btn-icon-action" title="New Save Branch">🧬</button>
+          </div>
+          <button id="btn-drawer-launch" class="btn-accent btn-launch-game hidden">Launch Game</button>
+          <button id="btn-drawer-sync" class="btn-accent">⚡ Sync Now</button>
+          <button id="btn-drawer-snapshot" class="btn-primary">📸 Save Snapshot</button>
+        </div>
+      </header>
+
+      <div class="drawer-grid">
+        <!-- Timeline Section -->
+        <section class="drawer-main-timeline">
+          <h3>Commit History & Save Version Timeline</h3>
+          
+          <div id="timeline-tree" class="timeline-tree">
+            <!-- Timeline nodes injected here -->
+          </div>
+        </section>
+
+        <!-- Sidebar Actions Section -->
+        <aside class="drawer-sidebar-actions">
+          <!-- Game Vertical Cover Image -->
+          <div class="drawer-cover-card">
+            <div id="drawer-cover-placeholder" class="drawer-cover-placeholder">🎮</div>
+            <img id="drawer-cover-img" class="drawer-cover-img hidden" src="" alt="Game Cover">
+          </div>
+
+          <div class="drawer-card">
+            <h4>Launch Configuration</h4>
+            <form id="form-game-launch-settings" style="display:flex; flex-direction:column; gap:10px;">
+              <div class="form-group" style="margin-bottom:0;">
+                <label for="drawer-game-appid" style="font-size:11px;">Steam App ID</label>
+                <input type="text" id="drawer-game-appid" placeholder="e.g. 1091500" style="padding:6px 10px; font-size:12px;">
+              </div>
+              <div class="form-group" style="margin-bottom:0;">
+                <label for="drawer-game-exepath" style="font-size:11px;">Executable Path (Non-Steam)</label>
+                <div class="input-row">
+                  <input type="text" id="drawer-game-exepath" placeholder="Browse to game .exe" style="padding:6px 10px; font-size:12px;">
+                  <button type="button" id="btn-browse-game-exe" class="btn-secondary btn-sm" style="padding:6px 10px;">Browse</button>
+                </div>
+              </div>
+              <div class="form-group" style="margin-bottom:0;">
+                <label for="drawer-game-coverurl" style="font-size:11px;">Custom Cover Image URL</label>
+                <input type="text" id="drawer-game-coverurl" placeholder="https://..." style="padding:6px 10px; font-size:12px;">
+              </div>
+              <button type="submit" class="btn-secondary btn-sm" style="width:100%; font-size:11px; padding:6px; margin-top:4px;">Save Configuration</button>
+            </form>
+          </div>
+
+          <div class="drawer-card">
+            <h4>Active Branch Info</h4>
+            <div class="info-list">
+              <div class="info-item">
+                <span class="label">Branch Name</span>
+                <span id="info-branch-name" class="val">main</span>
+              </div>
+              <div class="info-item">
+                <span class="label">Snapshots</span>
+                <span id="info-snapshot-count" class="val">0</span>
+              </div>
+              <div class="info-item">
+                <span class="label">Last Backup</span>
+                <span id="info-last-backup" class="val">Never</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="drawer-card danger-zone">
+            <h4>Danger Zone</h4>
+            <p>Remove this game and stop file tracking. Backed up snapshot files will remain stored locally.</p>
+            <button id="btn-delete-game" class="btn-danger">Untrack Game</button>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <!-- POPUP MODAL: Create Branch -->
+  <div id="create-branch-modal" class="modal-overlay hidden">
+    <div class="modal-card mini-card">
+      <div class="modal-header">
+        <h3>Create Save Branch</h3>
+        <button class="btn-close-submodal">&times;</button>
+      </div>
+      <form id="form-create-branch">
+        <div class="form-group">
+          <label for="branch-name-input">Branch Name</label>
+          <input type="text" id="branch-name-input" placeholder="e.g. good-ending, modded-run" required>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary btn-close-submodal">Cancel</button>
+          <button type="submit" class="btn-primary">Create Branch</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- POPUP MODAL: Rollback Confirmation -->
+  <div id="rollback-confirm-modal" class="modal-overlay hidden">
+    <div class="modal-card mini-card border-warning">
+      <div class="modal-header">
+        <h3>Confirm Rollback</h3>
+        <button class="btn-close-submodal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>You are about to roll back your save folder to snapshot: <strong id="rollback-target-id">snap_12345</strong>.</p>
+        <p class="text-warning" style="margin-top:10px;">⚠️ WARNING: This will overwrite files in your active game save folder. SaveSync will automatically create a safety rollback point before writing.</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary btn-close-submodal">Cancel Rollback</button>
+        <button id="btn-confirm-rollback-execute" class="btn-warning">Confirm &amp; Rollback</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- POPUP MODAL: Snapshot Comment Input -->
+  <div id="snapshot-comment-modal" class="modal-overlay hidden">
+    <div class="modal-card mini-card">
+      <div class="modal-header">
+        <h3>Commit Save Snapshot</h3>
+        <button class="btn-close-submodal">&times;</button>
+      </div>
+      <form id="form-snapshot-comment">
+        <div class="form-group">
+          <label for="snapshot-comment-input">Snapshot Description / Comment</label>
+          <input type="text" id="snapshot-comment-input" placeholder="e.g. Beaten Ornstein & Smough, Level 45" required>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary btn-close-submodal">Cancel</button>
+          <button type="submit" class="btn-primary">Snapshot</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- POPUP MODAL: Save Version History Conflict -->
+  <div id="conflict-modal" class="modal-overlay hidden">
+    <div class="modal-card conflict-card">
+      <div class="modal-header">
+        <h3>⚠️ Version History Conflict Detected</h3>
+        <button id="btn-close-conflict-modal" class="btn-close-submodal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px; color:var(--text-muted); margin-bottom:16px; line-height:1.5;">
+          Your local saves for <strong id="conflict-game-name" class="text-warning">Game</strong> have diverged with peer <strong id="conflict-peer-name" class="text-warning">Device</strong>. Neither save is a direct ancestor of the other. Please select a resolution option below.
+        </p>
+        
+        <div class="conflict-comparison-grid">
+          <!-- Local Version Info Card -->
+          <div class="version-card local">
+            <div class="version-badge">LOCAL VERSION (This PC)</div>
+            <div class="version-info-line">
+              <span class="lbl">Comment:</span>
+              <span id="conflict-local-comment" class="val">Loading...</span>
+            </div>
+            <div class="version-info-line">
+              <span class="lbl">Timestamp:</span>
+              <span id="conflict-local-time" class="val">Loading...</span>
+            </div>
+            <div class="version-info-line">
+              <span class="lbl">Snapshot ID:</span>
+              <span id="conflict-local-id" class="val font-mono">Loading...</span>
+            </div>
+          </div>
+          
+          <!-- VS Separator -->
+          <div class="conflict-vs">VS</div>
+          
+          <!-- Remote Version Info Card -->
+          <div class="version-card remote">
+            <div class="version-badge">REMOTE VERSION (Peer)</div>
+            <div class="version-info-line">
+              <span class="lbl">Comment:</span>
+              <span id="conflict-remote-comment" class="val">Loading...</span>
+            </div>
+            <div class="version-info-line">
+              <span class="lbl">Timestamp:</span>
+              <span id="conflict-remote-time" class="val">Loading...</span>
+            </div>
+            <div class="version-info-line">
+              <span class="lbl">Snapshot ID:</span>
+              <span id="conflict-remote-id" class="val font-mono">Loading...</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="conflict-options-desc" style="margin-top:16px; font-size:12px; line-height:1.4; color:var(--text-muted);">
+          <div style="margin-bottom:6px;"><strong style="color:var(--text-main);">Keep Local:</strong> Overwrites remote saves with your local files.</div>
+          <div style="margin-bottom:6px;"><strong style="color:var(--text-main);">Keep Remote:</strong> Overwrites your local save files with the peer's files.</div>
+          <div><strong style="color:var(--text-main);">Keep Both:</strong> Pulls remote saves into a separate branch (preserving both save versions).</div>
+        </div>
+      </div>
+      <div class="modal-actions" style="margin-top:20px;">
+        <button id="btn-conflict-keep-local" class="btn-primary" style="flex:1;">Keep Local</button>
+        <button id="btn-conflict-keep-remote" class="btn-accent" style="flex:1;">Keep Remote</button>
+        <button id="btn-conflict-keep-both" class="btn-warning" style="flex:1;">Keep Both</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION ROOT -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

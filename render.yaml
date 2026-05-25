@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────
+# render.yaml — Render.com Free Tier deployment spec
+# https://render.com/docs/blueprint-spec
+#
+# To deploy:
+#   1. Push this repo to GitHub
+#   2. Go to https://render.com/deploy
+#   3. Connect your GitHub repo — Render auto-detects this file
+#   4. Click "Apply" — your relay will be live in ~2 minutes
+#
+# Free tier gives you:
+#   - 750 hours/month (always-on for a single service)
+#   - Automatic HTTPS / WSS
+#   - Auto-deploy on git push
+# ─────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: savesync-relay
+    runtime: node
+    buildCommand: "cp package-relay.json package.json && npm install --omit=dev"
+    startCommand: "node src/relay-server.js"
+    envVars:
+      - key: PORT
+        value: "10000"          # Render assigns 10000 internally; it maps to 443/WSS externally
+      - key: MAX_PER_ROOM
+        value: "20"
+      - key: HEARTBEAT_MS
+        value: "30000"
+    healthCheckPath: /health
+    autoDeploy: true
