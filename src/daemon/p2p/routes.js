@@ -1,9 +1,32 @@
 import fs from 'fs';
 import path from 'path';
 import db from '../db.js';
-import { getFolderManifest, readBlocks, translatePathToLocal } from '../delta.js';
+import { getFolderManifest, readBlocks, translatePathToLocal, isSafePath } from '../delta.js';
 import { getLatestSnapshot } from '../snapshot.js';
 import watcherEngine from '../watcher.js';
+
+// Connection authorization middleware for local P2P endpoints
+function requirePairedPeer(req, res, next) {
+  let clientIp = req.ip.replace('::ffff:', '');
+  if (clientIp === '::1' || clientIp === '127.0.0.1') clientIp = 'localhost';
+  
+  // Always allow local dashboard/CLI interface requests
+  const isLocal = clientIp === 'localhost' || clientIp === '127.0.0.1' || clientIp === '::1';
+  if (isLocal) {
+    return next();
+  }
+
+  // Check if the client IP matches one of our active paired peers
+  const peers = db.getPeers();
+  const isPaired = Object.values(peers).some(p => p.address === clientIp || (clientIp === 'localhost' && p.address === '127.0.0.1'));
+  
+  if (!isPaired) {
+    console.warn(`[P2P Guard] Blocked unauthorized request from unpaired LAN IP: ${clientIp}`);
+    return res.status(401).json({ error: 'Unauthorized: Requesting peer is not paired.' });
+  }
+  
+  next();
+}
 
 export function registerExpressRoutes(app, p2pEngine) {
   app.get('/api/p2p/ping', (req, res) => {
@@ -20,6 +43,20 @@ export function registerExpressRoutes(app, p2pEngine) {
     let clientIp = req.ip.replace('::ffff:', '');
     if (clientIp === '::1' || clientIp === '127.0.0.1') clientIp = 'localhost';
     
+    // Verify pairing confirmation request matches a handshake we initiated
+    const sentRequests = p2pEngine.sentPairingRequests || {};
+    const keyByIp = `${clientIp}:${port}`;
+    const isValid = sentRequests[peerId] || 
+                    sentRequests[clientIp] || 
+                    sentRequests[keyByIp] ||
+                    (clientIp === 'localhost' && (sentRequests['127.0.0.1'] || sentRequests[`127.0.0.1:${port}`])) ||
+                    (clientIp === '127.0.0.1' && (sentRequests['localhost'] || sentRequests[`localhost:${port}`]));
+
+    if (!isValid) {
+      console.warn(`[P2P Guard] Blocked unsolicited /approve-confirm from IP: ${clientIp}, peerId: ${peerId}`);
+      return res.status(400).json({ error: 'Pairing confirmation rejected: no matching handshake initiated.' });
+    }
+
     db.addPeer(peerId, deviceName, clientIp, port, deviceType || 'desktop');
     db.updatePeer(peerId, { status: 'online', lastSeen: Date.now() });
 
@@ -51,7 +88,7 @@ export function registerExpressRoutes(app, p2pEngine) {
     res.status(200).json({ status: 'pending', message: 'Pairing request received. Waiting for host approval.' });
   });
 
-  app.post('/api/p2p/unpair', (req, res) => {
+  app.post('/api/p2p/unpair', requirePairedPeer, (req, res) => {
     const { peerId } = req.body;
     db.removePeer(peerId);
     if (typeof p2pEngine.onPeerUpdate === 'function') {
@@ -60,7 +97,7 @@ export function registerExpressRoutes(app, p2pEngine) {
     res.status(200).json({ success: true, message: 'Unpaired successfully.' });
   });
 
-  app.get('/api/p2p/manifest/:gameId', (req, res) => {
+  app.get('/api/p2p/manifest/:gameId', requirePairedPeer, (req, res) => {
     const { gameId } = req.params;
     let game = db.getGame(gameId);
     if (!game) {
@@ -95,11 +132,18 @@ export function registerExpressRoutes(app, p2pEngine) {
     }
   });
 
-  app.post('/api/p2p/blocks/:gameId', (req, res) => {
+  app.post('/api/p2p/blocks/:gameId', requirePairedPeer, (req, res) => {
     const { gameId } = req.params;
     const { relPath, blockIndices } = req.body;
     const game = db.getGame(gameId);
     if (!game) return res.status(404).json({ error: 'Game not found.' });
+
+    // Security: Validate that the requested path resides inside the game's save folder
+    if (!isSafePath(game.savePath, relPath)) {
+      console.warn(`[P2P Guard] Path traversal attempt blocked on game ${gameId}: ${relPath}`);
+      return res.status(403).json({ error: 'Access denied: path traversal attempt detected.' });
+    }
+
     try {
       const fullPath = path.join(game.savePath, relPath);
       res.status(200).json({ relPath, blocks: readBlocks(fullPath, blockIndices) });
@@ -108,7 +152,7 @@ export function registerExpressRoutes(app, p2pEngine) {
     }
   });
 
-  app.get('/api/p2p/snapshot/:gameId/:snapshotId', (req, res) => {
+  app.get('/api/p2p/snapshot/:gameId/:snapshotId', requirePairedPeer, (req, res) => {
     const { gameId, snapshotId } = req.params;
     const game = db.getGame(gameId);
     if (!game) return res.status(404).json({ error: 'Game not found.' });
@@ -129,7 +173,7 @@ export function registerExpressRoutes(app, p2pEngine) {
   });
 
   // Peer requests deletion of a specific file (for deletion sync)
-  app.post('/api/p2p/delete-file/:gameId', (req, res) => {
+  app.post('/api/p2p/delete-file/:gameId', requirePairedPeer, (req, res) => {
     const { gameId } = req.params;
     const { relPath } = req.body;
     if (!relPath) return res.status(400).json({ error: 'relPath is required.' });
@@ -139,13 +183,11 @@ export function registerExpressRoutes(app, p2pEngine) {
 
     try {
       // Security: ensure relPath doesn't escape the save directory
-      const fullPath = path.join(game.savePath, relPath);
-      const resolvedPath = path.resolve(fullPath);
-      const resolvedSave = path.resolve(game.savePath);
-      if (!resolvedPath.startsWith(resolvedSave + path.sep) && resolvedPath !== resolvedSave) {
+      if (!isSafePath(game.savePath, relPath)) {
         return res.status(403).json({ error: 'Path traversal denied.' });
       }
 
+      const resolvedPath = path.resolve(path.join(game.savePath, relPath));
       if (fs.existsSync(resolvedPath)) {
         const stat = fs.statSync(resolvedPath);
         if (stat.isDirectory()) {
@@ -161,3 +203,4 @@ export function registerExpressRoutes(app, p2pEngine) {
     }
   });
 }
+

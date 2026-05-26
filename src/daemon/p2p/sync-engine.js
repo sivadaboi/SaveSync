@@ -3,7 +3,7 @@ import path from 'path';
 import AdmZip from 'adm-zip';
 import db from '../db.js';
 import { log } from '../logger.js';
-import { getFolderManifest, diffManifests, patchFile } from '../delta.js';
+import { getFolderManifest, diffManifests, patchFile, isSafePath } from '../delta.js';
 import { getLatestSnapshot, switchBranch, createBranch } from '../snapshot.js';
 
 function ensureDir(dirPath) {
@@ -162,6 +162,10 @@ export class SyncEngine {
     if (filesToDeleteLocally.length > 0) {
       log('event', 'Applying remote deletions', `Removing ${filesToDeleteLocally.length} file(s) deleted on peer "${peer.name}"`);
       for (const relPath of filesToDeleteLocally) {
+        if (!isSafePath(game.savePath, relPath)) {
+          log('warn', `Path traversal deletion denied: ${relPath}`);
+          continue;
+        }
         const fullPath = path.join(game.savePath, relPath);
         try {
           if (fs.existsSync(fullPath)) {
@@ -178,6 +182,10 @@ export class SyncEngine {
     if (filesToDeleteOnPeer.length > 0) {
       log('event', 'Propagating local deletions', `Asking "${peer.name}" to delete ${filesToDeleteOnPeer.length} file(s)`);
       for (const relPath of filesToDeleteOnPeer) {
+        if (!isSafePath(game.savePath, relPath)) {
+          log('warn', `Path traversal deletion propagation denied: ${relPath}`);
+          continue;
+        }
         try {
           await this.p2pEngine.p2pRequest(peer, `/delete-file/${gameId}`, 'POST', { relPath });
           log('info', `Peer deleted: ${relPath}`);
@@ -193,6 +201,10 @@ export class SyncEngine {
       // Ensure all remote directories exist locally
       const remoteDirs = remoteManifest.dirs || [];
       for (const dir of remoteDirs) {
+        if (!isSafePath(game.savePath, dir)) {
+          log('warn', `Path traversal directory creation denied: ${dir}`);
+          continue;
+        }
         const localDirPath = path.join(game.savePath, dir);
         if (!fs.existsSync(localDirPath)) {
           fs.mkdirSync(localDirPath, { recursive: true });
@@ -275,6 +287,9 @@ export class SyncEngine {
         }
 
         // Patch file
+        if (!isSafePath(game.savePath, relPath)) {
+          throw new Error(`Access denied: path traversal attempt detected on pulled file ${relPath}`);
+        }
         const localFilePath = path.join(game.savePath, relPath);
         patchFile(localFilePath, blockChunks, remoteFileMeta);
 
@@ -408,6 +423,7 @@ export class SyncEngine {
       const diff = diffManifests(localManifest, remoteManifest);
       
       for (const relPath of diff.deleted) {
+        if (!isSafePath(game.savePath, relPath)) continue;
         const fullPath = path.join(game.savePath, relPath);
         if (fs.existsSync(fullPath)) {
           fs.unlinkSync(fullPath);
@@ -416,6 +432,9 @@ export class SyncEngine {
 
       const allModifiedFiles = [...diff.added, ...Object.keys(diff.modified)];
       for (const relPath of allModifiedFiles) {
+        if (!isSafePath(game.savePath, relPath)) {
+          throw new Error(`Access denied: path traversal attempt detected on conflict file ${relPath}`);
+        }
         const remoteFileMeta = remoteManifest.files[relPath];
         let differentBlocks = [];
         if (diff.added.includes(relPath)) {
@@ -485,6 +504,7 @@ export class SyncEngine {
 
       const diff = diffManifests(localManifest, remoteManifest);
       for (const relPath of diff.deleted) {
+        if (!isSafePath(game.savePath, relPath)) continue;
         const fullPath = path.join(game.savePath, relPath);
         if (fs.existsSync(fullPath)) {
           fs.unlinkSync(fullPath);
@@ -493,6 +513,9 @@ export class SyncEngine {
 
       const allModifiedFiles = [...diff.added, ...Object.keys(diff.modified)];
       for (const relPath of allModifiedFiles) {
+        if (!isSafePath(game.savePath, relPath)) {
+          throw new Error(`Access denied: path traversal attempt detected on conflict file ${relPath}`);
+        }
         const remoteFileMeta = remoteManifest.files[relPath];
         let differentBlocks = [];
         if (diff.added.includes(relPath)) {

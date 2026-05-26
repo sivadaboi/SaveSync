@@ -335,3 +335,19 @@ export function translatePathToLocal(remotePath) {
   
   return normalizedRemote;
 }
+
+/**
+ * Safely resolves a base directory and a relative path, verifying
+ * that the resolved path resides strictly inside the base directory.
+ */
+export function isSafePath(baseDir, relativePath) {
+  if (!baseDir || !relativePath) return false;
+  // Resolve path to handle any '..' or '.' segments
+  const resolvedPath = path.resolve(path.join(baseDir, relativePath));
+  const resolvedBase = path.resolve(baseDir);
+  
+  // Ensure the resolved path starts with the resolved base directory path
+  // plus the path separator, or matches it exactly.
+  return resolvedPath.startsWith(resolvedBase + path.sep) || resolvedPath === resolvedBase;
+}
+

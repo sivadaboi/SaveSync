@@ -10,6 +10,7 @@ class P2PEngine {
   constructor() {
     this.discoveredPeers = {}; // id -> { deviceName, address, port, lastSeen, isWan }
     this.pairingRequests = {}; // peerId -> { deviceName, address, port, isWan }
+    this.sentPairingRequests = {}; // peerId/IP -> timestamp
     this.activeSyncs = {}; // gameId -> boolean
     this.activeConflicts = {}; // gameId -> { peer, localSnap, remoteSnap }
     this.onPeerUpdate = null;
@@ -198,6 +199,9 @@ class P2PEngine {
     const localPeerId = this.getLocalPeerId();
 
     if (isWan || peerIp === 'relay') {
+      if (targetPeerId) {
+        this.sentPairingRequests[targetPeerId] = Date.now();
+      }
       this.wanClient.sendRelayMessage({
         type: 'request',
         to: targetPeerId || undefined,
@@ -214,6 +218,12 @@ class P2PEngine {
       return { status: 'pending', message: targetPeerId ? 'Pairing request sent to WAN peer.' : 'Pairing request broadcasted in WAN group.' };
     } else {
       try {
+        if (targetPeerId) {
+          this.sentPairingRequests[targetPeerId] = Date.now();
+        }
+        this.sentPairingRequests[peerIp] = Date.now();
+        this.sentPairingRequests[`${peerIp}:${peerPort}`] = Date.now();
+
         const response = await fetch(`http://${peerIp}:${peerPort}/api/p2p/handshake`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

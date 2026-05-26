@@ -20,9 +20,67 @@ import { setBroadcastFn, getHistory, log } from './logger.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Determine port dynamically from arguments or database settings
+const args = process.argv.slice(2);
+let daemonPort = db.getSettings().port || 8383;
+const portIndex = args.indexOf('--port');
+if (portIndex !== -1 && args[portIndex + 1]) {
+  daemonPort = parseInt(args[portIndex + 1], 10);
+}
+
 // Initialize Express app
 const app = express();
 app.use(express.json());
+
+// 1. Localhost restriction middleware for dashboard API and static assets
+app.use((req, res, next) => {
+  // Bypass localhost check for P2P endpoints (handled by requirePairedPeer middleware)
+  if (req.path.startsWith('/api/p2p/')) {
+    return next();
+  }
+
+  let ip = req.ip ? req.ip.replace('::ffff:', '') : '';
+  if (ip === '::1') ip = '127.0.0.1';
+
+  if (ip === '127.0.0.1' || ip === 'localhost') {
+    return next();
+  }
+
+  const remoteAddress = req.socket.remoteAddress ? req.socket.remoteAddress.replace('::ffff:', '') : '';
+  if (remoteAddress === '127.0.0.1' || remoteAddress === '::1') {
+    return next();
+  }
+
+  console.warn(`[Localhost Guard] Blocked external access to ${req.path} from IP: ${ip || remoteAddress}`);
+  return res.status(403).json({ error: 'Access denied: SaveSync dashboard is only accessible from localhost.' });
+});
+
+// 2. Strict CORS policy middleware
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    // Only allow local origins
+    const isLocalOrigin = origin === `http://localhost:${daemonPort}` || 
+                          origin === `http://127.0.0.1:${daemonPort}` || 
+                          /^http:\/\/localhost:\d+$/.test(origin) || 
+                          /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
+
+    if (isLocalOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    } else {
+      console.warn(`[CORS Guard] Blocked cross-origin request from origin: ${origin}`);
+      return res.status(403).json({ error: 'CORS policy: Access denied from this origin.' });
+    }
+  }
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // Serve static frontend assets
 const frontendDir = path.join(__dirname, '../frontend');
@@ -52,7 +110,16 @@ function getEnrichedGames() {
   return enriched;
 }
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  // Check if WebSocket connection is from localhost
+  let ip = req.socket.remoteAddress ? req.socket.remoteAddress.replace('::ffff:', '') : '';
+  if (ip === '::1') ip = '127.0.0.1';
+  if (ip !== '127.0.0.1' && ip !== 'localhost') {
+    console.warn(`[Localhost Guard] Blocked WebSocket connection from external IP: ${ip}`);
+    ws.close(4003, 'Forbidden');
+    return;
+  }
+
   connectedClients.add(ws);
   
   // Send initial data immediately
@@ -857,13 +924,7 @@ setInterval(() => {
 // ----------------------------------------------------
 // SERVER STARTUP
 // ----------------------------------------------------
-const args = process.argv.slice(2);
-let port = db.getSettings().port;
-
-const portIndex = args.indexOf('--port');
-if (portIndex !== -1 && args[portIndex + 1]) {
-  port = parseInt(args[portIndex + 1], 10);
-}
+const port = daemonPort;
 
 // Host configuration (can be local-only or bind to all interfaces)
 const host = '0.0.0.0';

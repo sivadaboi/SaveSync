@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import db from '../db.js';
 import { log } from '../logger.js';
-import { getFolderManifest, readBlocks, translatePathToLocal } from '../delta.js';
+import { getFolderManifest, readBlocks, translatePathToLocal, isSafePath } from '../delta.js';
 import { getLatestSnapshot } from '../snapshot.js';
 import watcherEngine from '../watcher.js';
 
@@ -331,8 +331,38 @@ export class WanClientManager {
     let status = 200;
     let data = {};
 
+    const requiresPairing = route.startsWith('/manifest/') ||
+                            route.startsWith('/blocks/') ||
+                            route.startsWith('/snapshot/') ||
+                            route.startsWith('/sync/trigger/') ||
+                            route === '/unpair';
+
+    const pairedPeers = db.getPeers();
+    const isPaired = !!pairedPeers[from];
+
     try {
-      if (route.startsWith('/manifest/')) {
+      if (requiresPairing && !isPaired) {
+        console.warn(`[WAN Guard] Blocked request for ${route} from unpaired WAN peer: ${from}`);
+        status = 401;
+        data = { error: 'Unauthorized: Requesting peer is not paired.' };
+      } else if (route === '/approve-confirm') {
+        const { peerId, deviceName, deviceType, port } = body;
+        const sentRequests = this.p2pEngine.sentPairingRequests || {};
+        if (!sentRequests[peerId] && !sentRequests[from]) {
+          console.warn(`[WAN Guard] Blocked unsolicited /approve-confirm from WAN peerId: ${peerId}`);
+          status = 400;
+          data = { error: 'Pairing confirmation rejected: no matching handshake initiated.' };
+        } else {
+          db.addPeer(peerId, deviceName, 'relay', port, deviceType || 'desktop');
+          db.updatePeer(peerId, { status: 'online', lastSeen: Date.now() });
+
+          if (typeof this.p2pEngine.onPeerUpdate === 'function') {
+            this.p2pEngine.onPeerUpdate();
+          }
+
+          data = { success: true, message: 'Pairing confirmed.' };
+        }
+      } else if (route.startsWith('/manifest/')) {
         const urlObj = new URL(route, 'http://localhost');
         const gameId = urlObj.pathname.split('/').pop();
         let game = db.getGame(gameId);
@@ -376,6 +406,10 @@ export class WanClientManager {
         if (!game) {
           status = 404;
           data = { error: 'Game not found.' };
+        } else if (!isSafePath(game.savePath, relPath)) {
+          console.warn(`[WAN Guard] Path traversal attempt blocked on game ${gameId}: ${relPath}`);
+          status = 403;
+          data = { error: 'Access denied: path traversal attempt detected.' };
         } else {
           const fullPath = path.join(game.savePath, relPath);
           data = {
@@ -434,17 +468,6 @@ export class WanClientManager {
         }
 
         data = { status: 'pending', message: 'Pairing request received via WAN. Waiting for approval.' };
-      } else if (route === '/approve-confirm') {
-        const { peerId, deviceName, deviceType, port } = body;
-        
-        db.addPeer(peerId, deviceName, 'relay', port, deviceType || 'desktop');
-        db.updatePeer(peerId, { status: 'online', lastSeen: Date.now() });
-
-        if (typeof this.p2pEngine.onPeerUpdate === 'function') {
-          this.p2pEngine.onPeerUpdate();
-        }
-
-        data = { success: true, message: 'Pairing confirmed.' };
       } else if (route === '/unpair') {
         const { peerId } = body;
         db.removePeer(peerId);
