@@ -6,7 +6,7 @@ on:
   push:
     branches: ["main"]
     paths:
-      - 'website/**'
+      - 'docs/**'
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
@@ -37,8 +37,9 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload website directory
-          path: 'website/'
+          # Upload docs directory
+          path: 'docs/'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
