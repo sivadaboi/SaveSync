@@ -11,7 +11,7 @@
     "start": "node src/daemon/index.js",
     "start:relay": "node src/relay-server.js",
     "start:app": "electron .",
-    "dist:app": "electron-builder --win --linux",
+    "dist:app": "electron-builder --win && electron-builder --linux",
     "port:forward": "node scripts/upnp-port-forward.js 8386",
     "port:unforward": "node scripts/upnp-port-forward.js 8386 --delete",
     "test": "node test/test-sync.js",
